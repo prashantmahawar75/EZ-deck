@@ -33,12 +33,14 @@ def _truncate_words(text: str, max_words: int = MAX_BULLET_WORDS) -> str:
 def plan_slides_fallback(
     ast_dict: dict[str, Any],
     target_count: int = SLIDE_COUNT_DEFAULT,
+    insights: Any = None,
 ) -> list[dict[str, Any]]:
     """Generate a slide plan using deterministic rules.
 
     Args:
         ast_dict: Structured AST dict from the parser.
         target_count: Desired number of slides.
+        insights: Optional DocumentInsights from the insight engine.
 
     Returns:
         List of slide plan dicts.
@@ -88,34 +90,44 @@ def plan_slides_fallback(
     slide_num += 1
 
     # ── Slide 3: Executive Summary ──
-    insights = []
-    for sec in sections[:4]:
-        body = sec.get("body", "").strip()
-        if body:
-            # Take first sentence as an insight
-            first_sentence = body.split(".")[0].strip()
-            if first_sentence and len(first_sentence) > 10:
-                insights.append(first_sentence[:120] + ("..." if len(first_sentence) > 120 else ""))
-
-    if not insights:
-        insights = [f"Overview of {title}"]
-
+    # Use insight engine if available, fall back to first-sentence extraction
+    exec_insights: list[str] = []
     key_metric = None
-    if metadata.get("has_numeric_data"):
-        # Try to find a stat in the body
-        for sec in sections:
-            for block in sec.get("blocks", []):
-                signals = block.get("data_signals", [])
-                for sig in signals:
-                    if sig.get("type") in ("currency", "percentage"):
-                        matches = sig.get("matches", [])
-                        if matches:
-                            key_metric = matches[0]
-                            break
+
+    if insights and insights.executive_insights:
+        exec_insights = insights.executive_insights[:4]
+        key_metric = insights.key_metric
+    else:
+        for sec in sections[:4]:
+            body = sec.get("body", "").strip()
+            if body:
+                first_sentence = body.split(".")[0].strip()
+                if first_sentence and len(first_sentence) > 10:
+                    exec_insights.append(first_sentence[:120] + ("..." if len(first_sentence) > 120 else ""))
+
+        if metadata.get("has_numeric_data"):
+            for sec in sections:
+                for block in sec.get("blocks", []):
+                    signals = block.get("data_signals", [])
+                    for sig in signals:
+                        if sig.get("type") in ("currency", "percentage"):
+                            matches = sig.get("matches", [])
+                            if matches:
+                                key_metric = matches[0]
+                                break
+                    if key_metric:
+                        break
                 if key_metric:
                     break
-            if key_metric:
-                break
+
+    if not exec_insights:
+        exec_insights = [f"Overview of {title}"]
+
+    exec_speaker = "Let me walk you through the key findings."
+    if insights and insights.executive_insights:
+        exec_speaker = " ".join(
+            (t if t.endswith(".") else t + ".") for t in insights.executive_insights[:2]
+        )
 
     slides.append({
         "slide_number": slide_num,
@@ -123,10 +135,10 @@ def plan_slides_fallback(
         "title": "Executive Summary",
         "subtitle": None,
         "content": {
-            "insights": insights[:4],
+            "insights": exec_insights[:4],
             "key_metric": key_metric,
         },
-        "speaker_notes": "This slide summarizes the key insights from the document.",
+        "speaker_notes": exec_speaker,
         "source_sections": [s["heading"] for s in sections[:4]],
     })
     slide_num += 1
@@ -153,8 +165,14 @@ def plan_slides_fallback(
         if slide_num > max_content_slide_num:
             break
 
-        slide = _section_to_slide(sec, slide_num)
+        slide = _section_to_slide(sec, slide_num, insights=insights)
         if slide:
+            # Enrich speaker notes with data insights
+            if insights:
+                sec_heading = sec.get("heading", "")
+                si_notes = insights.get_speaker_notes(sec_heading)
+                if si_notes:
+                    slide["speaker_notes"] = si_notes
             slides.append(slide)
             slide_num += 1
 
@@ -177,17 +195,26 @@ def plan_slides_fallback(
 
     # ── Last slide: Key Takeaways ──
     takeaways = []
-    for sec in sections:
-        body = sec.get("body", "").strip()
-        if body:
-            first_line = body.split("\n")[0].strip().split(".")[0].strip()
-            if first_line and len(first_line) > 10:
-                takeaways.append({
-                    "icon_hint": "✓",
-                    "text": _truncate_words(first_line, max_words=10),
-                })
-            if len(takeaways) >= 5:
-                break
+
+    # Use insight engine takeaways if available
+    if insights and insights.takeaways:
+        for t in insights.takeaways[:5]:
+            takeaways.append({
+                "icon_hint": t.icon_hint,
+                "text": _truncate_words(t.text, max_words=12),
+            })
+    else:
+        for sec in sections:
+            body = sec.get("body", "").strip()
+            if body:
+                first_line = body.split("\n")[0].strip().split(".")[0].strip()
+                if first_line and len(first_line) > 10:
+                    takeaways.append({
+                        "icon_hint": "✓",
+                        "text": _truncate_words(first_line, max_words=10),
+                    })
+                if len(takeaways) >= 5:
+                    break
 
     if not takeaways:
         takeaways = [{"icon_hint": "✓", "text": f"Review the full {title} document for details"}]
@@ -213,12 +240,14 @@ def plan_slides_fallback(
 def _section_to_slide(
     section: dict[str, Any],
     slide_num: int,
+    insights: Any = None,
 ) -> dict[str, Any] | None:
     """Convert a single AST section into the best-fit slide type.
 
     Args:
         section: AST section dict.
         slide_num: Current slide number.
+        insights: Optional DocumentInsights for enriched speaker notes.
 
     Returns:
         A slide plan dict, or None if the section is empty.
@@ -226,6 +255,13 @@ def _section_to_slide(
     heading = section.get("heading", "Section")
     blocks = section.get("blocks", [])
     body = section.get("body", "").strip()
+
+    # Get insight-enriched speaker notes if available
+    speaker_notes = f"Key points about {heading}."
+    if insights:
+        si_notes = insights.get_speaker_notes(heading)
+        if si_notes:
+            speaker_notes = si_notes
 
     if not blocks and not body:
         return None

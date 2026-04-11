@@ -140,6 +140,24 @@ REMEMBER:
 • Chart values must be numbers, not strings.
 • Return ONLY the JSON array. Start your response with '[' and end with ']'."""
 
+INSIGHTS_ADDENDUM = """
+━━━ PRE-COMPUTED DATA INSIGHTS (use these!) ━━━
+The insight engine has analysed the numeric data in this document.
+Use these insights verbatim in EXEC_SUMMARY.insights, speaker_notes,
+and KEY_TAKEAWAYS instead of inventing your own analysis.
+
+Executive insights (for EXEC_SUMMARY slide):
+{exec_insights}
+
+Key metric: {key_metric}
+
+Per-section speaker note fragments (use for speaker_notes on the matching slide):
+{section_notes}
+
+Key takeaways (for KEY_TAKEAWAYS slide):
+{takeaway_texts}
+"""
+
 RETRY_PROMPT = """Your previous response had validation errors:
 {errors}
 

@@ -27,6 +27,7 @@ from planner.ai_planner import plan_slides
 from planner.fallback_planner import plan_slides_fallback
 from builder.pptx_builder import PPTXBuilder
 from validator.pptx_validator import validate_presentation, ValidationResult
+from parser.insight_engine import generate_insights, DocumentInsights
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +142,22 @@ class MarkdownToPPTXPipeline:
             return result
         parse_ms = int((time.time() - parse_start) * 1000)
 
+        # ── Step 2b: Generate data insights ──
+        try:
+            insights = generate_insights(ast_dict)
+            logger.info(
+                "Insights: %d exec insights, %d takeaways, key_metric=%s",
+                len(insights.executive_insights),
+                len(insights.takeaways),
+                insights.key_metric[:50] if insights.key_metric else "None",
+            )
+        except Exception as exc:
+            logger.warning("Insight engine error (non-fatal): %s", exc)
+            insights = DocumentInsights()
+
         # ── Step 3: Plan slides ──
         plan_start = time.time()
-        slide_plan = self._plan_slides(ast_dict, result)
+        slide_plan = self._plan_slides(ast_dict, result, insights=insights)
         plan_ms = int((time.time() - plan_start) * 1000)
 
         if not slide_plan:
@@ -162,7 +176,7 @@ class MarkdownToPPTXPipeline:
                 logger.info("── RETRY %d/%d ──", attempt, MAX_RETRY_COUNT)
                 # Re-plan with retry hints
                 plan_start2 = time.time()
-                slide_plan = self._plan_slides(ast_dict, result, retry_hints)
+                slide_plan = self._plan_slides(ast_dict, result, retry_hints, insights=insights)
                 plan_ms += int((time.time() - plan_start2) * 1000)
 
                 if not slide_plan:
@@ -230,6 +244,7 @@ class MarkdownToPPTXPipeline:
         ast_dict: dict[str, Any],
         result: PipelineResult,
         retry_hints: list[str] | None = None,
+        insights: DocumentInsights | None = None,
     ) -> list[dict[str, Any]]:
         """Generate a slide plan using AI or fallback.
 
@@ -237,6 +252,7 @@ class MarkdownToPPTXPipeline:
             ast_dict: Parsed AST dict.
             result: PipelineResult to update with warnings.
             retry_hints: Optional hints from previous validation.
+            insights: Generated data insights.
 
         Returns:
             List of slide plan dicts.
@@ -245,7 +261,7 @@ class MarkdownToPPTXPipeline:
 
         if self.use_ai:
             try:
-                slide_plan = plan_slides(ast_dict, self.target_slides, retry_hints)
+                slide_plan = plan_slides(ast_dict, self.target_slides, retry_hints, insights=insights)
             except Exception as exc:
                 logger.warning("AI planner error: %s — falling back", exc)
                 result.warnings.append(f"AI planner fallback: {exc}")
@@ -253,7 +269,7 @@ class MarkdownToPPTXPipeline:
         if not slide_plan:
             logger.info("Using rule-based fallback planner")
             try:
-                slide_plan = plan_slides_fallback(ast_dict, self.target_slides)
+                slide_plan = plan_slides_fallback(ast_dict, self.target_slides, insights=insights)
             except Exception as exc:
                 logger.error("Fallback planner also failed: %s", exc)
                 result.warnings.append(f"Fallback planner error: {exc}")

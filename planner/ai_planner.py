@@ -29,6 +29,7 @@ from config import (
 from planner.prompts import (
     SYSTEM_PROMPT,
     USER_PROMPT,
+    INSIGHTS_ADDENDUM,
     RETRY_PROMPT,
     COUNT_ADJUSTMENT_PROMPT,
     CLUSTERING_PROMPT,
@@ -42,6 +43,7 @@ def plan_slides(
     ast_dict: dict[str, Any],
     target_count: int = SLIDE_COUNT_DEFAULT,
     retry_hints: list[str] | None = None,
+    insights: Any = None,
 ) -> list[dict[str, Any]]:
     """Generate a slide plan from the parsed AST using Claude API.
 
@@ -49,6 +51,7 @@ def plan_slides(
         ast_dict: Structured AST dict from the parser.
         target_count: Desired slide count (clamped to valid range).
         retry_hints: Optional hints from a previous validation failure.
+        insights: Optional DocumentInsights from the insight engine.
 
     Returns:
         List of validated slide plan dicts.
@@ -62,7 +65,7 @@ def plan_slides(
             "ANTHROPIC_API_KEY not set — falling back to rule-based planner"
         )
         from planner.fallback_planner import plan_slides_fallback
-        return plan_slides_fallback(ast_dict, target_count)
+        return plan_slides_fallback(ast_dict, target_count, insights=insights)
 
     target_count = max(SLIDE_COUNT_MIN, min(SLIDE_COUNT_MAX, target_count))
 
@@ -89,6 +92,21 @@ def plan_slides(
         max_slides=SLIDE_COUNT_MAX,
     )
 
+    # Append pre-computed data insights if available
+    if insights and insights.executive_insights:
+        section_notes_list = []
+        for si in insights.sections:
+            if si.speaker_note_fragment:
+                section_notes_list.append(f"  {si.heading}: {si.speaker_note_fragment}")
+        takeaway_list = [f"  - {t.text}" for t in insights.takeaways[:5]]
+
+        user_msg += INSIGHTS_ADDENDUM.format(
+            exec_insights="\n".join(f"  - {e}" for e in insights.executive_insights),
+            key_metric=insights.key_metric or "N/A",
+            section_notes="\n".join(section_notes_list) if section_notes_list else "  (none)",
+            takeaway_texts="\n".join(takeaway_list) if takeaway_list else "  (none)",
+        )
+
     if retry_hints:
         user_msg += "\n\nAdditional guidance from previous validation:\n"
         for hint in retry_hints:
@@ -100,7 +118,7 @@ def plan_slides(
     if raw_json is None:
         logger.warning("AI planner failed after all retries — using fallback")
         from planner.fallback_planner import plan_slides_fallback
-        return plan_slides_fallback(ast_dict, target_count)
+        return plan_slides_fallback(ast_dict, target_count, insights=insights)
 
     return raw_json
 
