@@ -132,10 +132,21 @@ def plan_slides_fallback(
     slide_num += 1
 
     # ── Content slides from sections ──
-    content_sections = _merge_small_sections(sections)
+    # Skip sections that duplicate structural slides (TITLE, AGENDA, EXEC_SUMMARY)
+    STRUCTURAL_HEADINGS = {
+        "executive summary", "agenda", "table of contents",
+        "conclusion", "summary",
+    }
+    content_sections = [
+        s for s in _merge_small_sections(sections)
+        if s.get("heading", "").lower().strip() not in STRUCTURAL_HEADINGS
+    ]
 
-    # Reserve 1 slot for takeaways
-    max_content_slide_num = target_count - 1
+    # Use extended slide range if we have more sections than the target allows
+    from config import SLIDE_COUNT_EXTENDED_MAX
+    slots_needed = len(content_sections) + 4  # +4 for TITLE, AGENDA, EXEC_SUMMARY, KEY_TAKEAWAYS
+    effective_max = min(SLIDE_COUNT_EXTENDED_MAX, max(target_count, slots_needed))
+    max_content_slide_num = effective_max - 1  # Reserve 1 for KEY_TAKEAWAYS
 
     # Determine which sections get which slide type
     for sec in content_sections:
@@ -231,7 +242,9 @@ def _section_to_slide(
                 chart_potential = detect_table_chart_potential(headers, rows)
                 if chart_potential and chart_potential.get("chart_hint") == "PIE_CHART":
                     return _make_pie_chart_slide(heading, content, slide_num)
-                elif chart_potential and chart_potential.get("chart_hint") in ("BAR_CHART", "LINE_CHART"):
+                elif chart_potential and chart_potential.get("chart_hint") == "LINE_CHART":
+                    return _make_line_chart_from_table(heading, content, chart_potential, slide_num)
+                elif chart_potential and chart_potential.get("chart_hint") == "BAR_CHART":
                     return _make_bar_chart_from_table(heading, content, chart_potential, slide_num)
                 # Otherwise render as plain table
                 return {
@@ -457,6 +470,67 @@ def _make_bar_chart_from_table(
             "y_label": "",
         },
         "speaker_notes": f"Bar chart showing {heading} data.",
+        "source_sections": [heading],
+    }
+
+
+def _make_line_chart_from_table(
+    heading: str,
+    table_content: dict[str, Any],
+    chart_potential: dict[str, Any],
+    slide_num: int,
+) -> dict[str, Any]:
+    """Create a line chart slide from time-series table data.
+
+    Args:
+        heading: Section heading.
+        table_content: Table content with headers and rows.
+        chart_potential: Chart potential info from detect_table_chart_potential.
+        slide_num: Current slide number.
+
+    Returns:
+        Line chart slide plan dict.
+    """
+    headers = table_content.get("headers", [])
+    rows = table_content.get("rows", [])
+    label_col = chart_potential.get("label_column")
+    numeric_cols = chart_potential.get("numeric_columns", [])
+
+    label_idx = 0
+    if label_col and label_col in headers:
+        label_idx = headers.index(label_col)
+
+    series = []
+    for num_col_name in numeric_cols[:3]:
+        if num_col_name in headers:
+            col_idx = headers.index(num_col_name)
+            points = []
+            for row in rows:
+                if label_idx < len(row) and col_idx < len(row):
+                    cell = row[col_idx].strip().replace(",", "").replace("$", "").replace("%", "").replace("+", "")
+                    try:
+                        x_val = row[label_idx].strip()
+                        points.append([x_val, float(cell)])
+                    except (ValueError, TypeError):
+                        continue
+            if points:
+                series.append({"name": num_col_name, "points": points})
+
+    if not series:
+        return _make_bar_chart_from_table(heading, table_content, chart_potential, slide_num)
+
+    return {
+        "slide_number": slide_num,
+        "slide_type": "LINE_CHART",
+        "title": heading,
+        "subtitle": None,
+        "content": {
+            "chart_title": heading,
+            "series": series,
+            "x_label": label_col or "",
+            "y_label": numeric_cols[0] if numeric_cols else "",
+        },
+        "speaker_notes": f"Line chart showing {heading} trends over time.",
         "source_sections": [heading],
     }
 

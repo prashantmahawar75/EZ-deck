@@ -148,12 +148,39 @@ def detect_table_chart_potential(headers: list[str], rows: list[list[str]]) -> d
     if not numeric_col_indices:
         return None
 
-    # Determine chart type based on structure
-    label_columns = [i for i in range(len(headers)) if i not in numeric_col_indices]
-    has_labels = len(label_columns) > 0
-    num_data_cols = len(numeric_col_indices)
+    # Detect year/time-series columns — treat them as labels, not numeric data
+    year_col_indices: list[int] = []
+    for col_idx in numeric_col_indices:
+        is_year = True
+        for row in rows:
+            if col_idx < len(row):
+                cell = row[col_idx].strip()
+                try:
+                    val = int(float(cell))
+                    if not (1900 <= val <= 2100):
+                        is_year = False
+                        break
+                except (ValueError, TypeError):
+                    is_year = False
+                    break
+        if is_year:
+            year_col_indices.append(col_idx)
 
-    if has_labels and num_data_cols == 1 and len(rows) <= 8:
+    # Year columns act as labels, not data
+    effective_numeric = [i for i in numeric_col_indices if i not in year_col_indices]
+    if not effective_numeric and year_col_indices:
+        # All numeric columns are years — not chart-worthy
+        return None
+
+    # Determine chart type based on structure
+    label_columns = [i for i in range(len(headers)) if i not in effective_numeric]
+    has_labels = len(label_columns) > 0
+    num_data_cols = len(effective_numeric)
+    has_time_axis = len(year_col_indices) > 0
+
+    if has_time_axis and num_data_cols >= 1:
+        chart_hint = "LINE_CHART"
+    elif has_labels and num_data_cols == 1 and len(rows) <= 8:
         chart_hint = "PIE_CHART"
     elif has_labels and num_data_cols >= 1:
         chart_hint = "BAR_CHART"
@@ -162,7 +189,7 @@ def detect_table_chart_potential(headers: list[str], rows: list[list[str]]) -> d
 
     result = {
         "type": "table_with_numerics",
-        "numeric_columns": [headers[i] for i in numeric_col_indices],
+        "numeric_columns": [headers[i] for i in effective_numeric],
         "label_column": headers[label_columns[0]] if label_columns else None,
         "chart_hint": chart_hint,
         "confidence": min(1.0, num_data_cols * 0.3 + len(rows) * 0.05),
