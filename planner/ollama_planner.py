@@ -115,12 +115,25 @@ def _ollama_chat(
         meta["total_sec"] = data.get("total_duration", 0) / 1e9
         meta["done_reason"] = data.get("done_reason", "")
 
+        # Also check thinking field (qwen3 may put content there)
+        thinking = message.get("thinking", "")
+        if thinking and not content:
+            logger.warning("Response in 'thinking' field (not 'content'), using it")
+            content = thinking.strip()
+
         if content:
             logger.info(
                 "Ollama: %d chars, %d tokens, %.1fs, done_reason=%s, model=%s",
                 len(content), meta["eval_count"], meta["total_sec"],
                 meta["done_reason"], model,
             )
+            # Dump raw response for debugging
+            try:
+                with open("/tmp/ollama_last_response.txt", "w") as _f:
+                    _f.write(content)
+                logger.debug("Raw response dumped to /tmp/ollama_last_response.txt")
+            except Exception:
+                pass
         return content or None, meta
     except requests.ConnectionError:
         logger.error("Cannot connect to Ollama at %s", OLLAMA_BASE_URL)
@@ -251,14 +264,17 @@ def plan_slides_ollama(
         # Parse JSON — with truncation repair
         slides_data = _extract_json(response)
 
-        # If JSON was truncated (model hit token limit), try repair
-        if slides_data is None and meta.get("done_reason") == "length":
-            logger.warning("Response truncated (hit token limit), attempting JSON repair")
+        # If JSON extraction failed, always try repair (not just on truncation)
+        if slides_data is None:
+            logger.warning("JSON extraction failed (done_reason=%s), attempting repair", meta.get("done_reason"))
             slides_data = _repair_truncated_json(response)
 
         if slides_data is None:
             last_errors = ["JSON parse failed: {}".format(response[:150])]
             logger.warning("JSON parse failed on attempt %d: %s", attempt + 1, response[:150])
+            # Dump first and last 300 chars for debugging
+            logger.debug("Response HEAD: %s", repr(response[:300]))
+            logger.debug("Response TAIL: %s", repr(response[-300:]))
             continue
 
         # Validate with Pydantic (lenient — skip if ≥ 5 valid slides)
@@ -293,20 +309,29 @@ def _extract_json(text: str) -> list[dict[str, Any]] | None:
     """Extract a JSON array from LLM response text."""
     cleaned = text.strip()
 
-    # Remove thinking tags if present
+    # Remove ALL think tags — handle both closed and unclosed
+    # Pattern 1: <think>...</think> (closed)
     if "<think>" in cleaned:
         think_end = cleaned.rfind("</think>")
         if think_end != -1:
-            cleaned = cleaned[think_end + 8:].strip()
+            # Remove everything from <think> to </think>
+            cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL).strip()
+        else:
+            # Unclosed <think> — remove everything from <think> to end, or to first [
+            think_start = cleaned.find("<think>")
+            bracket_pos = cleaned.find("[", think_start)
+            if bracket_pos != -1:
+                cleaned = cleaned[bracket_pos:]
+            else:
+                cleaned = cleaned[:think_start].strip()
+
+    # Remove /think or /no_think tags (Qwen3 artifacts)
+    cleaned = re.sub(r'</?(no_)?think>', '', cleaned).strip()
 
     # Strip markdown code fences
-    if cleaned.startswith("```"):
-        nl = cleaned.find("\n")
-        if nl != -1:
-            cleaned = cleaned[nl + 1:]
-        if cleaned.rstrip().endswith("```"):
-            cleaned = cleaned.rstrip()[:-3]
-        cleaned = cleaned.strip()
+    cleaned = re.sub(r'^```(?:json)?\s*\n?', '', cleaned)
+    cleaned = re.sub(r'\n?```\s*$', '', cleaned)
+    cleaned = cleaned.strip()
 
     # Try direct parse
     try:
@@ -315,22 +340,45 @@ def _extract_json(text: str) -> list[dict[str, Any]] | None:
             return data
         if isinstance(data, dict) and "slides" in data:
             return data["slides"]
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        logger.debug("Direct parse failed at pos %d: %s", e.pos, e.msg)
 
     # Find JSON array boundaries
     bracket_start = cleaned.find("[")
     bracket_end = cleaned.rfind("]")
     if bracket_start != -1 and bracket_end > bracket_start:
+        json_slice = cleaned[bracket_start:bracket_end + 1]
         try:
-            data = json.loads(cleaned[bracket_start:bracket_end + 1])
+            data = json.loads(json_slice)
             if isinstance(data, list):
                 return data
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.debug("Bracket extract failed at pos %d: %s", e.pos, e.msg)
+            # Try fixing common issues: trailing commas, unescaped newlines
+            fixed = _fix_common_json_issues(json_slice)
+            if fixed:
+                try:
+                    data = json.loads(fixed)
+                    if isinstance(data, list):
+                        logger.info("JSON fixed by common-issue repair")
+                        return data
+                except json.JSONDecodeError:
+                    pass
 
-    # Try repair
-    return _repair_truncated_json(cleaned)
+    return None
+
+
+def _fix_common_json_issues(text: str) -> str | None:
+    """Fix common JSON issues from LLM output."""
+    fixed = text
+    # Remove trailing commas before ] or }
+    fixed = re.sub(r',\s*([}\]])', r'\1', fixed)
+    # Remove any embedded <think> blocks within JSON
+    fixed = re.sub(r'<think>.*?</think>', '', fixed, flags=re.DOTALL)
+    fixed = re.sub(r'<think>[^<]*$', '', fixed)  # unclosed at end
+    # Fix unescaped newlines inside strings (replace with space)
+    # This is tricky — only do it if the basic fix helps
+    return fixed
 
 
 def _repair_truncated_json(text: str) -> list[dict[str, Any]] | None:
