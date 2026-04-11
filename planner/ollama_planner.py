@@ -129,6 +129,7 @@ def _ollama_chat(
     user: str,
     temperature: float = OLLAMA_TEMPERATURE,
     max_tokens: int = OLLAMA_MAX_TOKENS,
+    think: bool | None = None,
 ) -> str | None:
     """Call Ollama chat API.
 
@@ -138,6 +139,9 @@ def _ollama_chat(
         user: User prompt.
         temperature: Sampling temperature.
         max_tokens: Max tokens in response.
+        think: Enable/disable thinking mode. None = model default.
+              False = disable thinking (for structured JSON output).
+              True = enable thinking (for reasoning).
 
     Returns:
         Response text, or None on failure.
@@ -156,19 +160,34 @@ def _ollama_chat(
         },
     }
 
+    # Control thinking mode for Qwen3/Qwen3.5 models
+    if think is not None:
+        payload["think"] = think
+
     try:
-        logger.info("Calling Ollama model=%s (timeout=%ds)", model, OLLAMA_TIMEOUT_SEC)
+        logger.info("Calling Ollama model=%s (timeout=%ds, think=%s)", model, OLLAMA_TIMEOUT_SEC, think)
         resp = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT_SEC)
         resp.raise_for_status()
         data = resp.json()
-        content = data.get("message", {}).get("content", "")
-        if content:
+
+        message = data.get("message", {})
+        content = message.get("content", "")
+        thinking = message.get("thinking", "")
+
+        # For thinking models: content has the answer, thinking has the reasoning
+        # When think=True, content may be empty and reasoning is in thinking field
+        result = content.strip()
+        if not result and thinking:
+            result = thinking.strip()
+
+        if result:
+            eval_count = data.get("eval_count", 0)
+            total_sec = data.get("total_duration", 0) / 1e9
             logger.info(
-                "Ollama response: %d chars, model=%s, eval_duration=%s",
-                len(content), model,
-                data.get("eval_duration", "?"),
+                "Ollama response: %d chars, %d tokens, %.1fs total, model=%s",
+                len(result), eval_count, total_sec, model,
             )
-        return content or None
+        return result or None
     except requests.ConnectionError:
         logger.error("Cannot connect to Ollama at %s", OLLAMA_BASE_URL)
         return None
@@ -262,8 +281,10 @@ def plan_slides_ollama(
 ) -> list[dict[str, Any]]:
     """Generate slide plan using local Ollama models (two-stage).
 
-    Stage 1: Qwen3 (thinking) reasons about optimal slide structure.
-    Stage 2: Qwen3.5 generates the JSON slide plan.
+    Stage 1: Reasoning model with thinking enabled — reasons about
+             optimal slide structure and chart types.
+    Stage 2: Same model with thinking disabled — generates structured
+             JSON slide plan (avoids GPU model-swap overhead).
 
     Falls back to rule-based planner if Ollama is unavailable.
 
@@ -284,8 +305,11 @@ def plan_slides_ollama(
     target_count = max(SLIDE_COUNT_MIN, min(SLIDE_COUNT_MAX, target_count))
     insights_block = _build_insights_block(insights)
 
-    # ── Stage 1: Reasoning with Qwen3 (thinking mode) ──
-    logger.info("Stage 1: Reasoning with %s", OLLAMA_REASONING_MODEL)
+    # Use reasoning model for both stages (avoids GPU model swap overhead)
+    model = OLLAMA_REASONING_MODEL
+
+    # ── Stage 1: Reasoning with thinking enabled ──
+    logger.info("Stage 1: Reasoning with %s (think=True)", model)
     ast_summary = _build_ast_summary(ast_dict)
 
     reasoning_prompt = REASONING_PROMPT.format(
@@ -297,11 +321,12 @@ def plan_slides_ollama(
     )
 
     reasoning_plan = _ollama_chat(
-        model=OLLAMA_REASONING_MODEL,
+        model=model,
         system="You are an expert presentation strategist. Think step by step about the best slide structure.",
         user=reasoning_prompt,
         temperature=0.6,
         max_tokens=2048,
+        think=True,
     )
 
     if not reasoning_plan:
@@ -310,7 +335,7 @@ def plan_slides_ollama(
 
     logger.info("Reasoning plan: %d chars", len(reasoning_plan))
 
-    # ── Stage 2: JSON generation with Qwen3.5 ──
+    # ── Stage 2: JSON generation with thinking DISABLED ──
     ast_json_str = json.dumps(ast_dict, indent=2, default=str)
     # Truncate large ASTs to fit in context
     if len(ast_json_str) > 60_000:
@@ -339,8 +364,8 @@ def plan_slides_ollama(
 
     for attempt in range(OLLAMA_RETRY_COUNT):
         logger.info(
-            "Stage 2: Generation attempt %d/%d with %s",
-            attempt + 1, OLLAMA_RETRY_COUNT, OLLAMA_GENERATION_MODEL,
+            "Stage 2: Generation attempt %d/%d with %s (think=False)",
+            attempt + 1, OLLAMA_RETRY_COUNT, model,
         )
 
         if attempt > 0 and last_errors:
@@ -350,11 +375,12 @@ def plan_slides_ollama(
             user_msg_retry = user_msg
 
         response = _ollama_chat(
-            model=OLLAMA_GENERATION_MODEL,
+            model=model,
             system=system_msg,
             user=user_msg_retry,
             temperature=OLLAMA_TEMPERATURE,
             max_tokens=OLLAMA_MAX_TOKENS,
+            think=False,  # Disable thinking for structured JSON output
         )
 
         if not response:
