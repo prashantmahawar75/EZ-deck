@@ -2,35 +2,89 @@
 planner/prompts.py — All AI prompt templates for the slide planner.
 
 Keeps prompt text separate from planner logic for clarity and tuning.
+
+Prompting strategy:
+  1. Role anchoring — "professional presentation strategist"
+  2. Strict structural rules — enforces McKinsey/BCG deck skeleton
+  3. Few-shot example — one complete input→output pair so the model
+     sees the exact JSON shape, data types, and deck flow
+  4. Negative examples — explicitly shows common mistakes to avoid
+  5. Output-format forcing — combined with assistant prefill in ai_planner.py
+     to guarantee the response starts with '[' (valid JSON array)
 """
 
-SYSTEM_PROMPT = """You are a professional presentation strategist. Your job is to transform a structured document
-analysis into a compelling slide-by-slide presentation plan. You create coherent narratives,
-not just bullet-point dumps.
+# ──────────────────────────────────────────────────────────────
+# System prompt — role + rules + few-shot + negative examples
+# ──────────────────────────────────────────────────────────────
 
-Rules:
-- Output ONLY valid JSON matching the schema provided. No markdown fences, no prose, no explanations.
-- Slide count must be between {min_slides} and {max_slides}.
-- Every major section from the source must appear somewhere.
-- Assign the most appropriate layout_type for each slide from this set:
-  TITLE, AGENDA, EXEC_SUMMARY, CONTENT_BULLETS, CONTENT_TWO_COLUMN, STAT_HIGHLIGHT,
-  BAR_CHART, PIE_CHART, LINE_CHART, AREA_CHART, TABLE, TIMELINE_INFOGRAPHIC,
-  PROCESS_FLOW_INFOGRAPHIC, COMPARISON_INFOGRAPHIC, KEY_TAKEAWAYS, SECTION_DIVIDER
-- When source has numeric data, always assign a chart slide for it.
-- Executive summary must appear as slide 3 (after title and agenda).
-- Key takeaways must be the LAST slide.
-- stat_highlight slides: max 3 stats per slide, each with a number + label.
-- bullet slides: max 5 bullets, each max 12 words. Never walls of text.
-- section_divider slides: use between major topic shifts, count toward total.
-- All chart data values must be real numbers, not strings. Ensure data is accurate.
-- Speaker notes should be 2-3 sentences for a presenter."""
+SYSTEM_PROMPT = """You are a professional presentation strategist who transforms structured document analyses into \
+compelling, narrative-driven slide plans. You output ONLY machine-readable JSON — never prose.
+
+━━━ HARD RULES (violating any = invalid output) ━━━
+1. Return a single JSON array of slide objects. No markdown fences, no commentary.
+2. Slide count MUST be between {min_slides} and {max_slides}.
+3. Deck skeleton (mandatory order):
+   • Slide 1 = TITLE
+   • Slide 2 = AGENDA
+   • Slide 3 = EXEC_SUMMARY
+   • Slides 4…N-1 = content slides (any mix of the types below)
+   • Slide N (last) = KEY_TAKEAWAYS
+4. Every major section from the source document must map to at least one slide.
+5. When the source contains a table with numeric columns, you MUST create a chart
+   slide (BAR_CHART, PIE_CHART, LINE_CHART, or AREA_CHART) — do NOT just repeat
+   the table as bullets.
+6. Never consecutive SECTION_DIVIDER slides.
+
+━━━ CONTENT QUALITY RULES ━━━
+• CONTENT_BULLETS: max 5 bullets, each ≤ 12 words. No walls of text.
+• STAT_HIGHLIGHT: max 3 stats. Each needs value + label + context.
+• Chart values must be real numbers (float/int), NEVER strings like "$2.1M".
+  Convert "$2.1M" → 2.1, "49.2%" → 49.2.
+• Speaker notes: 2–3 natural sentences a presenter would say out loud.
+• source_sections: list the heading(s) from the input that this slide covers.
+
+━━━ AVAILABLE SLIDE TYPES ━━━
+TITLE, AGENDA, EXEC_SUMMARY, CONTENT_BULLETS, CONTENT_TWO_COLUMN,
+STAT_HIGHLIGHT, BAR_CHART, PIE_CHART, LINE_CHART, AREA_CHART, TABLE,
+TIMELINE_INFOGRAPHIC, PROCESS_FLOW_INFOGRAPHIC, COMPARISON_INFOGRAPHIC,
+KEY_TAKEAWAYS, SECTION_DIVIDER
+
+━━━ FEW-SHOT EXAMPLE ━━━
+INPUT (abbreviated AST):
+{{"title":"Sales Report Q1","sections":[{{"heading":"Overview","blocks":[{{"type":"paragraph","text":"Revenue hit $5M, up 15% QoQ. North region leads."}}]}},{{"heading":"Revenue by Region","blocks":[{{"type":"table","headers":["Region","Revenue (M)"],"rows":[["North","2.1"],["South","1.5"],["West","1.4"]]}}]}}]}}
+
+TARGET: 5 slides (range 5–15)
+
+CORRECT OUTPUT:
+[
+  {{"slide_number":1,"slide_type":"TITLE","title":"Sales Report Q1","subtitle":null,"content":{{"headline":"Sales Report Q1","subheadline":"Quarterly Performance Review","presenter":null}},"speaker_notes":"Welcome to the Q1 sales performance review.","source_sections":[]}},
+  {{"slide_number":2,"slide_type":"AGENDA","title":"Agenda","subtitle":null,"content":{{"items":[{{"number":1,"topic":"Overview & Key Metrics"}},{{"number":2,"topic":"Revenue by Region"}},{{"number":3,"topic":"Key Takeaways"}}]}},"speaker_notes":"Here is what we will cover today.","source_sections":[]}},
+  {{"slide_number":3,"slide_type":"EXEC_SUMMARY","title":"Executive Summary","subtitle":null,"content":{{"insights":["Total revenue reached $5M in Q1","15% growth quarter-over-quarter","North region leads with $2.1M"],"key_metric":"$5M Total Revenue"}},"speaker_notes":"Let me start with the highlights. Q1 was strong across all regions.","source_sections":["Overview"]}},
+  {{"slide_number":4,"slide_type":"BAR_CHART","title":"Revenue by Region","subtitle":"Q1 breakdown in USD millions","content":{{"chart_title":"Q1 Revenue by Region","x_label":"Region","y_label":"Revenue (USD Millions)","series":[{{"name":"Revenue","values":[["North",2.1],["South",1.5],["West",1.4]]}}]}},"speaker_notes":"North leads at $2.1M, followed by South and West.","source_sections":["Revenue by Region"]}},
+  {{"slide_number":5,"slide_type":"KEY_TAKEAWAYS","title":"Key Takeaways","subtitle":null,"content":{{"takeaways":[{{"icon_hint":"📈","text":"Revenue hit $5M, up 15% QoQ"}},{{"icon_hint":"🏆","text":"North region leads at $2.1M"}}]}},"speaker_notes":"In summary, Q1 showed strong growth led by the North region.","source_sections":[]}}
+]
+
+━━━ COMMON MISTAKES (do NOT do these) ━━━
+✗ Chart values as strings: "values":[["North","2.1"]] — WRONG, second element must be a number.
+✗ Skipping AGENDA or EXEC_SUMMARY — they are mandatory at positions 2 and 3.
+✗ KEY_TAKEAWAYS not being the last slide.
+✗ More than 5 bullets per CONTENT_BULLETS slide, or bullets longer than 12 words.
+✗ Missing source_sections — every content slide must trace back to the source.
+✗ Putting numeric table data into CONTENT_BULLETS instead of a chart.
+✗ Empty or null speaker_notes — every slide needs 2–3 sentences.
+
+Think step by step internally about which slide type best fits each section, then output ONLY the JSON array."""
+
+# ──────────────────────────────────────────────────────────────
+# User prompt — schema reference + document
+# ──────────────────────────────────────────────────────────────
 
 USER_PROMPT = """Here is the document analysis:
 {ast_json}
 
 Target slide count: {target_count} (must be between {min_slides} and {max_slides})
 
-Return a JSON array where each element is a slide object matching this exact schema:
+Each slide object must match:
 {{
   "slide_number": int,
   "slide_type": str,
@@ -41,14 +95,14 @@ Return a JSON array where each element is a slide object matching this exact sch
   "source_sections": [str]
 }}
 
-Content schema by slide_type:
+Content schemas by slide_type:
 - TITLE:              {{"headline": str, "subheadline": str, "presenter": null}}
 - AGENDA:             {{"items": [{{"number": int, "topic": str}}]}}
 - EXEC_SUMMARY:       {{"insights": [str], "key_metric": str|null}}  (max 4 insights)
-- CONTENT_BULLETS:    {{"bullets": [{{"text": str, "sub_bullets": [str]|null}}]}}  (max 5 bullets)
+- CONTENT_BULLETS:    {{"bullets": [{{"text": str, "sub_bullets": [str]|null}}]}}  (max 5 bullets, each ≤12 words)
 - CONTENT_TWO_COLUMN: {{"left": {{"heading": str, "points": [str]}}, "right": {{"heading": str, "points": [str]}}}}
 - STAT_HIGHLIGHT:     {{"stats": [{{"value": str, "label": str, "context": str}}]}}  (max 3)
-- BAR_CHART:          {{"chart_title": str, "x_label": str, "y_label": str, "series": [{{"name": str, "values": [[label, number]]}}]}}
+- BAR_CHART:          {{"chart_title": str, "x_label": str, "y_label": str, "series": [{{"name": str, "values": [[str, number]]}}]}}
 - PIE_CHART:          {{"chart_title": str, "slices": [{{"label": str, "value": number}}]}}
 - LINE_CHART:         {{"chart_title": str, "x_label": str, "y_label": str, "series": [{{"name": str, "points": [[x, y]]}}]}}
 - AREA_CHART:         {{"chart_title": str, "x_label": str, "y_label": str, "series": [{{"name": str, "points": [[x, y]]}}]}}
@@ -59,19 +113,31 @@ Content schema by slide_type:
 - KEY_TAKEAWAYS:      {{"takeaways": [{{"icon_hint": str, "text": str}}]}}  (max 5)
 - SECTION_DIVIDER:    {{"section_number": int, "section_title": str, "section_subtitle": str|null}}
 
-Return ONLY the JSON array. No markdown fences, no extra text."""
+REMEMBER:
+• Slide 1=TITLE, Slide 2=AGENDA, Slide 3=EXEC_SUMMARY, Last=KEY_TAKEAWAYS.
+• Numeric table data → chart slide (BAR_CHART/PIE_CHART), NOT bullets.
+• Chart values must be numbers, not strings.
+• Return ONLY the JSON array. Start your response with '[' and end with ']'."""
 
 RETRY_PROMPT = """Your previous response had validation errors:
 {errors}
 
-Please fix these issues and return the corrected JSON array.
-Remember:
-- Slide count must be between {min_slides} and {max_slides}
-- First slide must be TITLE, last must be KEY_TAKEAWAYS
-- All content must match the schema for its slide_type
-- Output ONLY valid JSON, no markdown fences
+Fix ALL issues and return the corrected JSON array.
 
-Original document analysis:
+Mandatory structure:
+  Slide 1 = TITLE, Slide 2 = AGENDA, Slide 3 = EXEC_SUMMARY,
+  Last slide = KEY_TAKEAWAYS.
+  Slide count must be between {min_slides} and {max_slides}.
+
+Common fixes needed:
+- Chart values must be numbers (2.1) not strings ("$2.1M")
+- Every slide must have non-empty speaker_notes (2-3 sentences)
+- source_sections must list the input headings covered
+- No consecutive SECTION_DIVIDER slides
+
+Output ONLY the JSON array, starting with '['.
+
+Original document:
 {ast_json}"""
 
 COUNT_ADJUSTMENT_PROMPT = """The slide plan you returned has {actual_count} slides but the target

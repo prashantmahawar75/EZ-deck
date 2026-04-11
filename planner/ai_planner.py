@@ -158,11 +158,14 @@ def _call_claude_with_retries(
                 max_tokens=AI_MAX_TOKENS,
                 temperature=AI_TEMPERATURE,
                 system=system_msg,
-                messages=[{"role": "user", "content": current_user_msg}],
+                messages=[
+                    {"role": "user", "content": current_user_msg},
+                    {"role": "assistant", "content": "["},  # Prefill forces JSON array start
+                ],
             )
 
-            # Extract text from response
-            response_text = ""
+            # Extract text from response — prepend '[' since we used prefill
+            response_text = "["
             for block in response.content:
                 if hasattr(block, "text"):
                     response_text += block.text

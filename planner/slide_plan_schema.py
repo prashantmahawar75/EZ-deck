@@ -254,33 +254,71 @@ class SlidePlan(BaseModel):
     def validate_all(self) -> list[str]:
         """Run all validation checks on the plan.
 
+        Enforces globally accepted deck structure (McKinsey/BCG style):
+          Slide 1 = TITLE → Slide 2 = AGENDA → Slide 3 = EXEC_SUMMARY
+          → content slides → Last = KEY_TAKEAWAYS
+
         Returns:
             List of all validation error strings.
         """
         errors: list[str] = []
-
-        # Check slide count
         count = len(self.slides)
+        types = [s.slide_type for s in self.slides]
+
+        # ── Slide count ──
         if count < SLIDE_COUNT_MIN or count > SLIDE_COUNT_MAX:
             errors.append(
                 f"Slide count {count} outside range [{SLIDE_COUNT_MIN}, {SLIDE_COUNT_MAX}]"
             )
 
-        # Check slide numbering
+        # ── Slide numbering (sequential 1..N) ──
         for i, slide in enumerate(self.slides):
             if slide.slide_number != i + 1:
                 errors.append(
                     f"Slide numbering gap: expected {i + 1}, got {slide.slide_number}"
                 )
 
-        # Check required structure
-        types = [s.slide_type for s in self.slides]
-        if types and types[0] != "TITLE":
-            errors.append("First slide must be TITLE")
-        if types and types[-1] != "KEY_TAKEAWAYS":
+        # ── Mandatory deck skeleton ──
+        if count >= 1 and types[0] != "TITLE":
+            errors.append("Slide 1 must be TITLE")
+        if count >= 2 and types[1] != "AGENDA":
+            errors.append("Slide 2 must be AGENDA")
+        if count >= 3 and types[2] != "EXEC_SUMMARY":
+            errors.append("Slide 3 must be EXEC_SUMMARY")
+        if count >= 1 and types[-1] != "KEY_TAKEAWAYS":
             errors.append("Last slide must be KEY_TAKEAWAYS")
 
-        # Validate individual contents
+        # ── No consecutive SECTION_DIVIDER slides ──
+        for i in range(len(types) - 1):
+            if types[i] == "SECTION_DIVIDER" and types[i + 1] == "SECTION_DIVIDER":
+                errors.append(
+                    f"Consecutive SECTION_DIVIDER at slides {i + 1} and {i + 2}"
+                )
+
+        # ── At least one data visualization if source likely has numbers ──
+        data_types = {"BAR_CHART", "PIE_CHART", "LINE_CHART", "AREA_CHART", "TABLE"}
+        content_types = set(types)
+        # Check if any source section mentions numeric signals (tables, percentages, etc.)
+        has_source_data = any(
+            "table" in str(s.source_sections).lower()
+            or "data" in str(s.source_sections).lower()
+            or "revenue" in str(s.source_sections).lower()
+            or "metric" in str(s.source_sections).lower()
+            for s in self.slides
+        )
+        if has_source_data and not content_types.intersection(data_types):
+            errors.append(
+                "Source has numeric/tabular data but no chart or table slide was created"
+            )
+
+        # ── Speaker notes should not be empty ──
+        for slide in self.slides:
+            if not slide.speaker_notes or not slide.speaker_notes.strip():
+                errors.append(
+                    f"Slide {slide.slide_number} ({slide.slide_type}) has empty speaker_notes"
+                )
+
+        # ── Validate individual slide content against type-specific schema ──
         for slide in self.slides:
             content_errors = slide.validate_content()
             errors.extend(content_errors)
