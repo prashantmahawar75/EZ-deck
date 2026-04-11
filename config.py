@@ -5,6 +5,7 @@ All constants, thresholds, model names, and tunable parameters live here.
 No module should define its own magic numbers — import from config instead.
 """
 
+import os
 from pathlib import Path
 
 # ──────────────────────────────────────────────
@@ -39,6 +40,20 @@ SLIDE_COUNT_EXTENDED_MAX = 17
 
 API_RETRY_COUNT = 3
 API_RETRY_DELAYS_SEC = [2, 4, 8]  # Exponential backoff
+
+# ──────────────────────────────────────────────
+# Ollama (local LLM) settings
+# ──────────────────────────────────────────────
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_REASONING_MODEL = os.environ.get("OLLAMA_REASONING_MODEL", "qwen3:8b")
+OLLAMA_GENERATION_MODEL = os.environ.get("OLLAMA_GENERATION_MODEL", "qwen3.5:9b")
+OLLAMA_TIMEOUT_SEC = int(os.environ.get("OLLAMA_TIMEOUT_SEC", "300"))
+OLLAMA_MAX_TOKENS = 8192
+OLLAMA_TEMPERATURE = 0.4
+OLLAMA_RETRY_COUNT = 3
+
+# Planner backend: "ollama" | "anthropic" | "fallback"
+PLANNER_BACKEND = os.environ.get("PLANNER_BACKEND", "ollama")
 
 VALID_SLIDE_TYPES = [
     "TITLE", "AGENDA", "EXEC_SUMMARY", "CONTENT_BULLETS",

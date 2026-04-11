@@ -19,12 +19,14 @@ from config import (
     DEFAULT_MASTER_PATH,
     SLIDE_COUNT_DEFAULT,
     MAX_RETRY_COUNT,
+    PLANNER_BACKEND,
     PlannerError,
     BuildError,
 )
 from parser.md_parser import parse_markdown
 from planner.ai_planner import plan_slides
 from planner.fallback_planner import plan_slides_fallback
+from planner.ollama_planner import plan_slides_ollama
 from builder.pptx_builder import PPTXBuilder
 from validator.pptx_validator import validate_presentation, ValidationResult
 from parser.insight_engine import generate_insights, DocumentInsights
@@ -261,7 +263,14 @@ class MarkdownToPPTXPipeline:
 
         if self.use_ai:
             try:
-                slide_plan = plan_slides(ast_dict, self.target_slides, retry_hints, insights=insights)
+                if PLANNER_BACKEND == "ollama":
+                    logger.info("Using Ollama local LLM planner")
+                    slide_plan = plan_slides_ollama(ast_dict, self.target_slides, retry_hints, insights=insights)
+                elif PLANNER_BACKEND == "anthropic":
+                    slide_plan = plan_slides(ast_dict, self.target_slides, retry_hints, insights=insights)
+                else:
+                    # "fallback" or unknown → skip AI
+                    pass
             except Exception as exc:
                 logger.warning("AI planner error: %s — falling back", exc)
                 result.warnings.append(f"AI planner fallback: {exc}")

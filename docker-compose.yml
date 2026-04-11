@@ -1,0 +1,65 @@
+services:
+  # ── Ollama: Local LLM inference with GPU ──
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ez-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  # ── Model Puller: Downloads models on first run ──
+  model-puller:
+    image: curlimages/curl:latest
+    container_name: ez-model-puller
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "=== Pulling Qwen3:8b (reasoning model) ==="
+        curl -s http://ollama:11434/api/pull -d '{"name": "qwen3:8b", "stream": false}' && \
+        echo "=== Pulling Qwen3.5:9b (generation model) ==="
+        curl -s http://ollama:11434/api/pull -d '{"name": "qwen3.5:9b", "stream": false}' && \
+        echo "=== All models pulled successfully ==="
+
+  # ── EZ-Deck Web App ──
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ez-deck-app
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./outputs:/app/outputs
+    environment:
+      - PLANNER_BACKEND=ollama
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_REASONING_MODEL=qwen3:8b
+      - OLLAMA_GENERATION_MODEL=qwen3.5:9b
+      - OLLAMA_TIMEOUT_SEC=300
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+volumes:
+  ollama_data:
