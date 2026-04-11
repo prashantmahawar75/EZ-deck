@@ -1,20 +1,19 @@
 """
-planner/ollama_planner.py — Local LLM planner using Ollama (Qwen3 + Qwen3.5).
+planner/ollama_planner.py — Local LLM planner using Ollama.
 
-Two-model architecture:
-  1. Qwen3:8b (thinking mode) — reasons about document structure, identifies
-     key themes, charts, and narrative flow.
-  2. Qwen3.5:9b — generates the structured JSON slide plan from the
-     reasoning output.
+Single-stage architecture with JSON repair:
+  - Qwen3:8b with think=False generates structured JSON slide plans directly.
+  - The insight engine (Layer 2) already handles reasoning about data.
+  - Truncated JSON is repaired by closing open brackets/braces.
 
-Falls back to rule-based planner if Ollama is unreachable.
+Falls back to rule-based planner if Ollama is unreachable or JSON is invalid.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
+import re
 import time
 from typing import Any
 
@@ -32,95 +31,46 @@ from config import (
     SLIDE_COUNT_MAX,
     SLIDE_COUNT_DEFAULT,
 )
-from planner.prompts import (
-    SYSTEM_PROMPT,
-    USER_PROMPT,
-    INSIGHTS_ADDENDUM,
-    RETRY_PROMPT,
-)
 from planner.slide_plan_schema import SlidePlan, SlidePlanItem
 
 logger = logging.getLogger(__name__)
 
-# ── Reasoning prompt (for Qwen3 thinking mode) ──
-REASONING_PROMPT = """Analyze this document AST and decide the best slide plan strategy.
+# ── Compact system prompt (minimized to save input tokens) ──
+OLLAMA_SYSTEM = """Output ONLY a valid JSON array of slide objects. No explanation, no markdown fences.
 
-Document:
-{ast_summary}
+Rules:
+- Slide 1=TITLE, 2=AGENDA, 3=EXEC_SUMMARY, last=KEY_TAKEAWAYS
+- {min_slides}-{max_slides} slides total
+- Tables with numbers → BAR_CHART/PIE_CHART/LINE_CHART (NOT bullets)
+- Chart values must be numbers, not strings
+- Max 6 bullets, each ≤7 words
+- Every slide needs speaker_notes (2-3 sentences)
+- Keep speaker_notes SHORT. Keep bullet text SHORT.
 
-Target: {target_count} slides (range {min_slides}–{max_slides})
+Slide types: TITLE, AGENDA, EXEC_SUMMARY, CONTENT_BULLETS, STAT_HIGHLIGHT,
+BAR_CHART, PIE_CHART, LINE_CHART, TABLE, KEY_TAKEAWAYS, SECTION_DIVIDER"""
 
-For each section, decide:
-1. Best slide_type (CONTENT_BULLETS, BAR_CHART, PIE_CHART, LINE_CHART, TABLE, STAT_HIGHLIGHT, TIMELINE_INFOGRAPHIC, PROCESS_FLOW_INFOGRAPHIC, COMPARISON_INFOGRAPHIC, SECTION_DIVIDER)
-2. Whether tables should become charts (and which chart type)
-3. Key narrative flow and story arc
+# ── Compact user prompt with inline schemas ──
+OLLAMA_USER = """Generate a JSON slide plan for this document.
+
+Title: {title}
+Sections: {section_summary}
 
 {insights_block}
-
-Output a concise plan as a numbered list:
-- Slide 1: TITLE — "{{title}}"
-- Slide 2: AGENDA — topics list
-- Slide 3: EXEC_SUMMARY — top insights
-- Slide 4+: one line per content slide with type and source section
-- Last: KEY_TAKEAWAYS
-
-Be specific about chart types for data tables. Think step by step."""
-
-# ── Generation prompt (simplified for local LLM) ──
-GENERATION_SYSTEM = """You are a JSON generator that creates slide plans for presentations.
-You output ONLY valid JSON arrays. No markdown fences, no commentary, no explanation.
-
-HARD RULES:
-1. Return a JSON array of slide objects. Nothing else.
-2. Slide count: {min_slides}–{max_slides}.
-3. Slide 1=TITLE, Slide 2=AGENDA, Slide 3=EXEC_SUMMARY, Last=KEY_TAKEAWAYS.
-4. Numeric tables → chart slides (BAR_CHART/PIE_CHART/LINE_CHART), NOT bullets.
-5. Chart values must be numbers, not strings.
-6. Max 6 bullets per slide, each ≤7 words.
-7. Every slide needs speaker_notes (2-3 sentences).
-
-SLIDE TYPES: TITLE, AGENDA, EXEC_SUMMARY, CONTENT_BULLETS, CONTENT_TWO_COLUMN,
-STAT_HIGHLIGHT, BAR_CHART, PIE_CHART, LINE_CHART, AREA_CHART, TABLE,
-TIMELINE_INFOGRAPHIC, PROCESS_FLOW_INFOGRAPHIC, COMPARISON_INFOGRAPHIC,
-KEY_TAKEAWAYS, SECTION_DIVIDER"""
-
-GENERATION_USER = """Create a slide plan from this document analysis.
-
-Reasoning plan to follow:
-{reasoning_plan}
-
-Document AST:
-{ast_json}
 
 Target: {target_count} slides
 
-{insights_block}
+Schemas (follow exactly):
+TITLE: {{"slide_number":1,"slide_type":"TITLE","title":"...","subtitle":null,"content":{{"headline":"...","subheadline":"...","presenter":null}},"speaker_notes":"...","source_sections":[]}}
+AGENDA: {{"slide_number":2,"slide_type":"AGENDA","title":"Agenda","subtitle":null,"content":{{"items":[{{"number":1,"topic":"..."}}]}},"speaker_notes":"...","source_sections":[]}}
+EXEC_SUMMARY: {{"slide_number":3,"slide_type":"EXEC_SUMMARY","title":"Executive Summary","subtitle":null,"content":{{"insights":["..."],"key_metric":"..."}},"speaker_notes":"...","source_sections":["..."]}}
+CONTENT_BULLETS: {{"slide_number":N,"slide_type":"CONTENT_BULLETS","title":"...","subtitle":null,"content":{{"bullets":[{{"text":"...","sub_bullets":null}}]}},"speaker_notes":"...","source_sections":["..."]}}
+BAR_CHART: {{"slide_number":N,"slide_type":"BAR_CHART","title":"...","subtitle":null,"content":{{"chart_title":"...","x_label":"...","y_label":"...","series":[{{"name":"...","values":[["Label",123]]}}]}},"speaker_notes":"...","source_sections":["..."]}}
+PIE_CHART: {{"slide_number":N,"slide_type":"PIE_CHART","title":"...","subtitle":null,"content":{{"chart_title":"...","slices":[{{"label":"...","value":45}}]}},"speaker_notes":"...","source_sections":["..."]}}
+LINE_CHART: {{"slide_number":N,"slide_type":"LINE_CHART","title":"...","subtitle":null,"content":{{"chart_title":"...","x_label":"...","y_label":"...","series":[{{"name":"...","points":[["2020",100]]}}]}},"speaker_notes":"...","source_sections":["..."]}}
+KEY_TAKEAWAYS: {{"slide_number":N,"slide_type":"KEY_TAKEAWAYS","title":"Key Takeaways","subtitle":null,"content":{{"takeaways":[{{"icon_hint":"📈","text":"..."}}]}},"speaker_notes":"...","source_sections":[]}}
 
-Each slide object schema:
-{{
-  "slide_number": int,
-  "slide_type": str,
-  "title": str,
-  "subtitle": str | null,
-  "content": {{...}},
-  "speaker_notes": str,
-  "source_sections": [str]
-}}
-
-Content schemas:
-- TITLE: {{"headline": str, "subheadline": str, "presenter": null}}
-- AGENDA: {{"items": [{{"number": int, "topic": str}}]}}
-- EXEC_SUMMARY: {{"insights": [str], "key_metric": str|null}}
-- CONTENT_BULLETS: {{"bullets": [{{"text": str, "sub_bullets": [str]|null}}]}}
-- STAT_HIGHLIGHT: {{"stats": [{{"value": str, "label": str, "context": str}}]}}
-- BAR_CHART: {{"chart_title": str, "x_label": str, "y_label": str, "series": [{{"name": str, "values": [[str, number]]}}]}}
-- PIE_CHART: {{"chart_title": str, "slices": [{{"label": str, "value": number}}]}}
-- LINE_CHART: {{"chart_title": str, "x_label": str, "y_label": str, "series": [{{"name": str, "points": [[x, y]]}}]}}
-- TABLE: {{"table_title": str, "headers": [str], "rows": [[str]]}}
-- KEY_TAKEAWAYS: {{"takeaways": [{{"icon_hint": str, "text": str}}]}}
-- SECTION_DIVIDER: {{"section_number": int, "section_title": str, "section_subtitle": str|null}}
-
-Return ONLY the JSON array. Start with '[' and end with ']'."""
+Output the JSON array now. Start with [ and end with ]."""
 
 
 def _ollama_chat(
@@ -129,24 +79,13 @@ def _ollama_chat(
     user: str,
     temperature: float = OLLAMA_TEMPERATURE,
     max_tokens: int = OLLAMA_MAX_TOKENS,
-    think: bool | None = None,
-) -> str | None:
-    """Call Ollama chat API.
-
-    Args:
-        model: Model name (e.g., "qwen3:8b").
-        system: System prompt.
-        user: User prompt.
-        temperature: Sampling temperature.
-        max_tokens: Max tokens in response.
-        think: Enable/disable thinking mode. None = model default.
-              False = disable thinking (for structured JSON output).
-              True = enable thinking (for reasoning).
+) -> tuple[str | None, dict]:
+    """Call Ollama chat API with thinking disabled.
 
     Returns:
-        Response text, or None on failure.
+        Tuple of (response text or None, metadata dict with token counts).
     """
-    url = f"{OLLAMA_BASE_URL}/api/chat"
+    url = "{}/api/chat".format(OLLAMA_BASE_URL)
     payload = {
         "model": model,
         "messages": [
@@ -154,118 +93,93 @@ def _ollama_chat(
             {"role": "user", "content": user},
         ],
         "stream": False,
+        "think": False,
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
+            "num_ctx": 16384,
         },
     }
 
-    # Control thinking mode for Qwen3/Qwen3.5 models
-    if think is not None:
-        payload["think"] = think
-
+    meta = {"eval_count": 0, "total_sec": 0, "done_reason": ""}
     try:
-        logger.info("Calling Ollama model=%s (timeout=%ds, think=%s)", model, OLLAMA_TIMEOUT_SEC, think)
+        logger.info("Calling Ollama model=%s (timeout=%ds, num_predict=%d)",
+                     model, OLLAMA_TIMEOUT_SEC, max_tokens)
         resp = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT_SEC)
         resp.raise_for_status()
         data = resp.json()
 
         message = data.get("message", {})
-        content = message.get("content", "")
-        thinking = message.get("thinking", "")
+        content = message.get("content", "").strip()
+        meta["eval_count"] = data.get("eval_count", 0)
+        meta["total_sec"] = data.get("total_duration", 0) / 1e9
+        meta["done_reason"] = data.get("done_reason", "")
 
-        # For thinking models: content has the answer, thinking has the reasoning
-        # When think=True, content may be empty and reasoning is in thinking field
-        result = content.strip()
-        if not result and thinking:
-            result = thinking.strip()
-
-        if result:
-            eval_count = data.get("eval_count", 0)
-            total_sec = data.get("total_duration", 0) / 1e9
+        if content:
             logger.info(
-                "Ollama response: %d chars, %d tokens, %.1fs total, model=%s",
-                len(result), eval_count, total_sec, model,
+                "Ollama: %d chars, %d tokens, %.1fs, done_reason=%s, model=%s",
+                len(content), meta["eval_count"], meta["total_sec"],
+                meta["done_reason"], model,
             )
-        return result or None
+        return content or None, meta
     except requests.ConnectionError:
         logger.error("Cannot connect to Ollama at %s", OLLAMA_BASE_URL)
-        return None
+        return None, meta
     except requests.Timeout:
         logger.error("Ollama request timed out after %ds", OLLAMA_TIMEOUT_SEC)
-        return None
+        return None, meta
     except Exception as exc:
         logger.error("Ollama request failed: %s", exc)
-        return None
+        return None, meta
 
 
 def _check_ollama_available() -> bool:
     """Check if Ollama is running and accessible."""
     try:
-        resp = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+        resp = requests.get("{}/api/tags".format(OLLAMA_BASE_URL), timeout=5)
         return resp.status_code == 200
     except Exception:
         return False
 
 
-def _build_ast_summary(ast_dict: dict[str, Any]) -> str:
-    """Build a compact summary of the AST for the reasoning model.
-
-    Keeps it short to fit in context window of smaller models.
-    """
-    title = ast_dict.get("title", "Untitled")
+def _build_section_summary(ast_dict: dict[str, Any]) -> str:
+    """Build ultra-compact section summary to minimize input tokens."""
     sections = ast_dict.get("sections", [])
-    metadata = ast_dict.get("metadata", {})
-
-    lines = [
-        f"Title: {title}",
-        f"Word count: {metadata.get('word_count', 0)}",
-        f"Sections: {len(sections)}",
-        f"Has numeric data: {metadata.get('has_numeric_data', False)}",
-        "",
-    ]
-
+    lines = []
     for sec in sections:
         heading = sec.get("heading", "?")
         blocks = sec.get("blocks", [])
-        body_preview = sec.get("body", "")[:150]
-
-        block_types = [b["type"] for b in blocks]
-        table_count = sum(1 for b in blocks if b["type"] == "table")
-        list_count = sum(1 for b in blocks if b["type"] in ("bullet_list", "ordered_list"))
-
-        line = f"## {heading}"
-        if table_count:
-            # Summarize table headers
-            for b in blocks:
-                if b["type"] == "table":
-                    headers = b.get("content", {}).get("headers", [])
-                    rows = b.get("content", {}).get("rows", [])
-                    line += f" [TABLE: {headers}, {len(rows)} rows]"
-        if list_count:
-            line += f" [LISTS: {list_count}]"
-        if body_preview:
-            line += f"\n  Preview: {body_preview}..."
-
-        lines.append(line)
-
+        parts = [heading]
+        for b in blocks:
+            if b["type"] == "table":
+                headers = b.get("content", {}).get("headers", [])
+                rows = b.get("content", {}).get("rows", [])
+                row_preview = ""
+                if rows:
+                    row_preview = " e.g. " + str(rows[0])
+                parts.append("[TABLE: {} cols, {} rows{}]".format(
+                    "|".join(headers), len(rows), row_preview))
+            elif b["type"] in ("bullet_list", "ordered_list"):
+                items = b.get("content", [])
+                parts.append("[LIST: {} items]".format(len(items)))
+        body = sec.get("body", "")
+        if body and not any("[TABLE" in p or "[LIST" in p for p in parts[1:]):
+            parts.append("({} words)".format(len(body.split())))
+        lines.append(" — ".join(parts))
     return "\n".join(lines)
 
 
 def _build_insights_block(insights: Any) -> str:
-    """Build insights block for prompts."""
+    """Build compact insights block for prompts."""
     if not insights or not insights.executive_insights:
         return ""
 
-    parts = ["PRE-COMPUTED DATA INSIGHTS:"]
-    parts.append("Executive insights: " + "; ".join(insights.executive_insights[:4]))
+    parts = ["DATA INSIGHTS (use these in EXEC_SUMMARY and KEY_TAKEAWAYS):"]
+    for i, e in enumerate(insights.executive_insights[:4], 1):
+        parts.append("{}. {}".format(i, e))
 
     if insights.key_metric:
-        parts.append(f"Key metric: {insights.key_metric}")
-
-    for si in insights.sections:
-        if si.speaker_note_fragment:
-            parts.append(f"  {si.heading}: {si.speaker_note_fragment}")
+        parts.append("Key metric: {}".format(insights.key_metric))
 
     if insights.takeaways:
         parts.append("Takeaways: " + "; ".join(t.text for t in insights.takeaways[:5]))
@@ -279,23 +193,14 @@ def plan_slides_ollama(
     retry_hints: list[str] | None = None,
     insights: Any = None,
 ) -> list[dict[str, Any]]:
-    """Generate slide plan using local Ollama models (two-stage).
+    """Generate slide plan using local Ollama model (single-stage).
 
-    Stage 1: Reasoning model with thinking enabled — reasons about
-             optimal slide structure and chart types.
-    Stage 2: Same model with thinking disabled — generates structured
-             JSON slide plan (avoids GPU model-swap overhead).
+    Uses Qwen3:8b with thinking disabled for direct JSON generation.
+    The insight engine already handles reasoning about data, so no
+    separate reasoning stage is needed.
 
-    Falls back to rule-based planner if Ollama is unavailable.
-
-    Args:
-        ast_dict: Structured AST dict from the parser.
-        target_count: Desired slide count.
-        retry_hints: Optional hints from previous validation failure.
-        insights: Optional DocumentInsights from insight engine.
-
-    Returns:
-        List of validated slide plan dicts.
+    Falls back to rule-based planner if Ollama is unavailable or
+    JSON generation fails after retries.
     """
     if not _check_ollama_available():
         logger.warning("Ollama not available — falling back to rule-based planner")
@@ -303,116 +208,81 @@ def plan_slides_ollama(
         return plan_slides_fallback(ast_dict, target_count, insights=insights)
 
     target_count = max(SLIDE_COUNT_MIN, min(SLIDE_COUNT_MAX, target_count))
+
+    model = OLLAMA_REASONING_MODEL
     insights_block = _build_insights_block(insights)
 
-    # Use reasoning model for both stages (avoids GPU model swap overhead)
-    model = OLLAMA_REASONING_MODEL
-
-    # ── Stage 1: Reasoning with thinking enabled ──
-    logger.info("Stage 1: Reasoning with %s (think=True)", model)
-    ast_summary = _build_ast_summary(ast_dict)
-
-    reasoning_prompt = REASONING_PROMPT.format(
-        ast_summary=ast_summary,
-        target_count=target_count,
-        min_slides=SLIDE_COUNT_MIN,
-        max_slides=SLIDE_COUNT_MAX,
-        insights_block=insights_block,
-    )
-
-    reasoning_plan = _ollama_chat(
-        model=model,
-        system="You are an expert presentation strategist. Think step by step about the best slide structure.",
-        user=reasoning_prompt,
-        temperature=0.6,
-        max_tokens=2048,
-        think=True,
-    )
-
-    if not reasoning_plan:
-        logger.warning("Reasoning stage failed — using direct generation")
-        reasoning_plan = f"Create {target_count} slides following standard structure: TITLE, AGENDA, EXEC_SUMMARY, content slides, KEY_TAKEAWAYS."
-
-    logger.info("Reasoning plan: %d chars", len(reasoning_plan))
-
-    # ── Stage 2: JSON generation with thinking DISABLED ──
-    ast_json_str = json.dumps(ast_dict, indent=2, default=str)
-    # Truncate large ASTs to fit in context
-    if len(ast_json_str) > 60_000:
-        logger.warning("AST JSON too large (%d chars), truncating for local model", len(ast_json_str))
-        ast_json_str = ast_json_str[:60_000] + "\n... [TRUNCATED]"
-
-    system_msg = GENERATION_SYSTEM.format(
+    system_msg = OLLAMA_SYSTEM.format(
         min_slides=SLIDE_COUNT_MIN,
         max_slides=SLIDE_COUNT_MAX,
     )
 
-    user_msg = GENERATION_USER.format(
-        reasoning_plan=reasoning_plan,
-        ast_json=ast_json_str,
+    user_msg = OLLAMA_USER.format(
+        title=ast_dict.get("title", "Presentation"),
+        section_summary=_build_section_summary(ast_dict),
         target_count=target_count,
         insights_block=insights_block,
     )
 
     if retry_hints:
-        user_msg += "\n\nFix these issues from previous attempt:\n"
-        for hint in retry_hints:
-            user_msg += f"- {hint}\n"
+        user_msg += "\n\nFix these issues: " + "; ".join(retry_hints[:3])
 
-    # Try generation with retries
-    last_errors: list[str] = []
+    last_errors = []
 
     for attempt in range(OLLAMA_RETRY_COUNT):
-        logger.info(
-            "Stage 2: Generation attempt %d/%d with %s (think=False)",
-            attempt + 1, OLLAMA_RETRY_COUNT, model,
-        )
+        logger.info("Generation attempt %d/%d with %s", attempt + 1, OLLAMA_RETRY_COUNT, model)
 
+        current_msg = user_msg
         if attempt > 0 and last_errors:
-            # Add error context to the prompt
-            user_msg_retry = user_msg + f"\n\nPrevious errors: {'; '.join(last_errors[:3])}\nFix and return valid JSON array."
-        else:
-            user_msg_retry = user_msg
+            current_msg = user_msg + "\n\nPrevious errors: " + "; ".join(last_errors[:2]) + "\nFix and return valid JSON."
 
-        response = _ollama_chat(
+        response, meta = _ollama_chat(
             model=model,
             system=system_msg,
-            user=user_msg_retry,
-            temperature=OLLAMA_TEMPERATURE,
+            user=current_msg,
+            temperature=0.3 if attempt == 0 else 0.5,
             max_tokens=OLLAMA_MAX_TOKENS,
-            think=False,  # Disable thinking for structured JSON output
         )
 
         if not response:
             last_errors = ["Empty response from Ollama"]
             continue
 
-        # Parse JSON from response
+        # Parse JSON — with truncation repair
         slides_data = _extract_json(response)
+
+        # If JSON was truncated (model hit token limit), try repair
+        if slides_data is None and meta.get("done_reason") == "length":
+            logger.warning("Response truncated (hit token limit), attempting JSON repair")
+            slides_data = _repair_truncated_json(response)
+
         if slides_data is None:
-            last_errors = [f"Failed to parse JSON: {response[:200]}"]
-            logger.warning("JSON parse failed on attempt %d", attempt + 1)
+            last_errors = ["JSON parse failed: {}".format(response[:150])]
+            logger.warning("JSON parse failed on attempt %d: %s", attempt + 1, response[:150])
             continue
 
-        # Validate with Pydantic
+        # Validate with Pydantic (lenient — skip if ≥ 5 valid slides)
         validation_errors = _validate_slide_plan(slides_data)
         if validation_errors:
+            # If we have enough valid slides, use them despite warnings
+            if len(slides_data) >= 5:
+                logger.warning(
+                    "Validation warnings (proceeding with %d slides): %s",
+                    len(slides_data), "; ".join(validation_errors[:2]),
+                )
+                return slides_data
             last_errors = validation_errors
-            logger.warning(
-                "Validation failed on attempt %d: %s",
-                attempt + 1, "; ".join(validation_errors[:3]),
-            )
+            logger.warning("Validation failed on attempt %d: %s",
+                           attempt + 1, "; ".join(validation_errors[:3]))
             continue
 
-        logger.info(
-            "Ollama planner succeeded on attempt %d with %d slides",
-            attempt + 1, len(slides_data),
-        )
+        logger.info("Ollama planner succeeded on attempt %d with %d slides",
+                     attempt + 1, len(slides_data))
         return slides_data
 
-    # All attempts failed — fall back to rule-based
+    # All attempts failed
     logger.warning(
-        "Ollama planner failed after %d attempts — using fallback. Last errors: %s",
+        "Ollama planner failed after %d attempts — using fallback. Errors: %s",
         OLLAMA_RETRY_COUNT, "; ".join(last_errors[:3]),
     )
     from planner.fallback_planner import plan_slides_fallback
@@ -423,18 +293,19 @@ def _extract_json(text: str) -> list[dict[str, Any]] | None:
     """Extract a JSON array from LLM response text."""
     cleaned = text.strip()
 
-    # Remove thinking tags if present (Qwen3 thinking mode)
+    # Remove thinking tags if present
     if "<think>" in cleaned:
         think_end = cleaned.rfind("</think>")
         if think_end != -1:
-            cleaned = cleaned[think_end + len("</think>"):].strip()
+            cleaned = cleaned[think_end + 8:].strip()
 
     # Strip markdown code fences
     if cleaned.startswith("```"):
-        first_newline = cleaned.index("\n") if "\n" in cleaned else len(cleaned)
-        cleaned = cleaned[first_newline + 1:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
+        nl = cleaned.find("\n")
+        if nl != -1:
+            cleaned = cleaned[nl + 1:]
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[:-3]
         cleaned = cleaned.strip()
 
     # Try direct parse
@@ -447,10 +318,10 @@ def _extract_json(text: str) -> list[dict[str, Any]] | None:
     except json.JSONDecodeError:
         pass
 
-    # Try to find JSON array in text
+    # Find JSON array boundaries
     bracket_start = cleaned.find("[")
     bracket_end = cleaned.rfind("]")
-    if bracket_start != -1 and bracket_end != -1 and bracket_end > bracket_start:
+    if bracket_start != -1 and bracket_end > bracket_start:
         try:
             data = json.loads(cleaned[bracket_start:bracket_end + 1])
             if isinstance(data, list):
@@ -458,16 +329,123 @@ def _extract_json(text: str) -> list[dict[str, Any]] | None:
         except json.JSONDecodeError:
             pass
 
+    # Try repair
+    return _repair_truncated_json(cleaned)
+
+
+def _repair_truncated_json(text: str) -> list[dict[str, Any]] | None:
+    """Attempt to repair truncated JSON by closing open structures.
+
+    When the model hits its token limit, the JSON array gets cut off mid-object.
+    This function tries to salvage the complete slide objects before the truncation.
+    """
+    cleaned = text.strip()
+
+    # Find the JSON array start
+    start = cleaned.find("[")
+    if start == -1:
+        return None
+
+    json_text = cleaned[start:]
+
+    # Strategy 1: Find the last complete object (ends with }) followed by , or ]
+    # Look for },\n  { or }\n] patterns to find complete objects
+    last_complete = -1
+    depth_brace = 0
+    depth_bracket = 0
+    in_string = False
+    escape_next = False
+
+    for i, ch in enumerate(json_text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+
+        if ch == '{':
+            depth_brace += 1
+        elif ch == '}':
+            depth_brace -= 1
+            if depth_brace == 0 and depth_bracket == 1:
+                # Found end of a top-level object in the array
+                last_complete = i
+        elif ch == '[':
+            depth_bracket += 1
+        elif ch == ']':
+            depth_bracket -= 1
+
+    if last_complete > 0:
+        # Truncate to the last complete object, close the array
+        truncated = json_text[:last_complete + 1] + "]"
+        try:
+            data = json.loads(truncated)
+            if isinstance(data, list) and len(data) >= 3:
+                logger.info("JSON repair succeeded: recovered %d complete slides", len(data))
+                return data
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: progressively strip from the end and try to close
+    for trim in range(1, min(len(json_text), 2000)):
+        candidate = json_text[:len(json_text) - trim]
+        # Find last }, close array
+        last_brace = candidate.rfind("}")
+        if last_brace > 0:
+            attempt = candidate[:last_brace + 1] + "]"
+            try:
+                data = json.loads(attempt)
+                if isinstance(data, list) and len(data) >= 3:
+                    logger.info("JSON repair (strategy 2): recovered %d slides", len(data))
+                    return data
+            except json.JSONDecodeError:
+                continue
+
     return None
 
 
 def _validate_slide_plan(slides_data: list[dict[str, Any]]) -> list[str]:
     """Validate slide plan against Pydantic schemas."""
-    errors: list[str] = []
+    errors = []
     try:
         slide_items = [SlidePlanItem.model_validate(s) for s in slides_data]
         plan = SlidePlan(slides=slide_items)
         errors = plan.validate_all()
     except Exception as exc:
-        errors.append(f"Schema validation error: {exc}")
+        errors.append("Schema validation error: {}".format(exc))
     return errors
+
+
+def warmup_model() -> bool:
+    """Pre-warm the Ollama model by sending a tiny request.
+
+    Call this at app startup to load model weights into GPU VRAM
+    so the first real request doesn't pay the cold-start penalty.
+    """
+    if not _check_ollama_available():
+        return False
+
+    model = OLLAMA_REASONING_MODEL
+    logger.info("Pre-warming model %s...", model)
+    url = "{}/api/chat".format(OLLAMA_BASE_URL)
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Say OK"}],
+        "stream": False,
+        "think": False,
+        "options": {"num_predict": 5},
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=120)
+        if resp.status_code == 200:
+            logger.info("Model %s pre-warmed successfully", model)
+            return True
+    except Exception as exc:
+        logger.warning("Model warmup failed: %s", exc)
+    return False
