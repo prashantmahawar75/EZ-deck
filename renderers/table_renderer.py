@@ -139,7 +139,7 @@ def render_table(
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = header_text
-        run.font.size = Pt(12)
+        run.font.size = Pt(FONT_SIZE_SMALL)
         run.font.bold = True
         run.font.color.rgb = white
         run.font.name = font_name
@@ -164,7 +164,7 @@ def render_table(
             p.alignment = PP_ALIGN.LEFT if col_idx == 0 else PP_ALIGN.CENTER
             run = p.add_run()
             run.text = str(cell_text)
-            run.font.size = Pt(11)
+            run.font.size = Pt(FONT_SIZE_SMALL)
             run.font.color.rgb = dark_text
             run.font.name = font_name
 
@@ -192,7 +192,7 @@ def render_table(
         p.alignment = PP_ALIGN.RIGHT
         run = p.add_run()
         run.text = f"Showing first {len(rows)} rows. See appendix for full data."
-        run.font.size = Pt(9)
+        run.font.size = Pt(FONT_SIZE_FOOTNOTE)
         run.font.italic = True
         run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
         run.font.name = font_name

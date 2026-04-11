@@ -10,7 +10,10 @@ from __future__ import annotations
 from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator
 
-from config import VALID_SLIDE_TYPES, SLIDE_COUNT_MIN, SLIDE_COUNT_MAX
+from config import (
+    VALID_SLIDE_TYPES, SLIDE_COUNT_MIN, SLIDE_COUNT_MAX,
+    MAX_BULLETS_PER_SLIDE, MAX_BULLET_WORDS,
+)
 
 
 # ──────────────────────────────────────────────
@@ -46,16 +49,27 @@ class BulletItem(BaseModel):
     text: str
     sub_bullets: Optional[list[str]] = None
 
+    @field_validator("text")
+    @classmethod
+    def validate_bullet_word_count(cls, v: str) -> str:
+        """Enforce 6x6/7x7 rule: max MAX_BULLET_WORDS words per bullet."""
+        word_count = len(v.split())
+        if word_count > MAX_BULLET_WORDS * 2:  # Hard limit: 2x the target
+            raise ValueError(
+                f"Bullet has {word_count} words (max {MAX_BULLET_WORDS}): '{v[:50]}...'"
+            )
+        return v
+
 
 class ContentBulletsContent(BaseModel):
-    """Content for CONTENT_BULLETS slides."""
-    bullets: list[BulletItem] = Field(min_length=1, max_length=7)
+    """Content for CONTENT_BULLETS slides (6x6 rule: max 6 bullets)."""
+    bullets: list[BulletItem] = Field(min_length=1, max_length=MAX_BULLETS_PER_SLIDE)
 
 
 class ColumnContent(BaseModel):
     """One column of a two-column layout."""
     heading: str
-    points: list[str] = Field(min_length=1)
+    points: list[str] = Field(min_length=1, max_length=MAX_BULLETS_PER_SLIDE)
 
 
 class ContentTwoColumnContent(BaseModel):

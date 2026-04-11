@@ -111,7 +111,7 @@ def render_timeline(
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = str(event.get("year", ""))
-        run.font.size = Pt(8)
+        run.font.size = Pt(9)  # Constrained to small circle (0.3in)
         run.font.bold = True
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
         run.font.name = font_name
@@ -146,7 +146,7 @@ def render_timeline(
         p_title.alignment = PP_ALIGN.CENTER
         run_title = p_title.add_run()
         run_title.text = event.get("title", "")
-        run_title.font.size = Pt(11)
+        run_title.font.size = Pt(FONT_SIZE_SMALL)
         run_title.font.bold = True
         run_title.font.color.rgb = dark_text
         run_title.font.name = font_name
@@ -158,7 +158,7 @@ def render_timeline(
             p_desc.alignment = PP_ALIGN.CENTER
             run_desc = p_desc.add_run()
             run_desc.text = desc[:80]
-            run_desc.font.size = Pt(9)
+            run_desc.font.size = Pt(FONT_SIZE_FOOTNOTE)
             run_desc.font.color.rgb = light_text
             run_desc.font.name = font_name
 
@@ -271,7 +271,7 @@ def render_process_flow(
                 p_title.alignment = PP_ALIGN.CENTER
                 run_title = p_title.add_run()
                 run_title.text = step.get("title", "")
-                run_title.font.size = Pt(12)
+                run_title.font.size = Pt(FONT_SIZE_SMALL)
                 run_title.font.bold = True
                 run_title.font.color.rgb = dark_text
                 run_title.font.name = font_name
@@ -283,7 +283,7 @@ def render_process_flow(
                     p_desc.space_before = Pt(4)
                     run_desc = p_desc.add_run()
                     run_desc.text = desc[:60]
-                    run_desc.font.size = Pt(9)
+                    run_desc.font.size = Pt(FONT_SIZE_FOOTNOTE)
                     run_desc.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
                     run_desc.font.name = font_name
 
@@ -341,7 +341,7 @@ def render_process_flow(
             p.alignment = PP_ALIGN.CENTER
             run = p.add_run()
             run.text = str(step.get("number", i + 1))
-            run.font.size = Pt(12)
+            run.font.size = Pt(FONT_SIZE_SMALL)
             run.font.bold = True
             run.font.color.rgb = white
             run.font.name = font_name
@@ -353,7 +353,7 @@ def render_process_flow(
             p.alignment = PP_ALIGN.LEFT
             run = p.add_run()
             run.text = step.get("title", "")
-            run.font.size = Pt(13)
+            run.font.size = Pt(FONT_SIZE_SMALL)
             run.font.bold = True
             run.font.color.rgb = dark_text
             run.font.name = font_name
@@ -364,7 +364,7 @@ def render_process_flow(
                 p2.alignment = PP_ALIGN.LEFT
                 run2 = p2.add_run()
                 run2.text = desc[:80]
-                run2.font.size = Pt(10)
+                run2.font.size = Pt(FONT_SIZE_FOOTNOTE)
                 run2.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
                 run2.font.name = font_name
 
@@ -492,7 +492,7 @@ def render_comparison(
     p.alignment = PP_ALIGN.CENTER
     run = p.add_run()
     run.text = "VS"
-    run.font.size = Pt(12)
+    run.font.size = Pt(FONT_SIZE_SMALL)
     run.font.bold = True
     run.font.color.rgb = white
     run.font.name = font_name
@@ -523,7 +523,7 @@ def render_comparison(
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = dim.get("left", "")
-        run.font.size = Pt(12)
+        run.font.size = Pt(FONT_SIZE_SMALL)
         run.font.color.rgb = dark_text
         run.font.name = font_name
 
@@ -544,7 +544,7 @@ def render_comparison(
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = dim.get("aspect", "")
-        run.font.size = Pt(11)
+        run.font.size = Pt(FONT_SIZE_SMALL)
         run.font.bold = True
         run.font.color.rgb = accent
         run.font.name = font_name
@@ -566,7 +566,7 @@ def render_comparison(
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = dim.get("right", "")
-        run.font.size = Pt(12)
+        run.font.size = Pt(FONT_SIZE_SMALL)
         run.font.color.rgb = dark_text
         run.font.name = font_name
 

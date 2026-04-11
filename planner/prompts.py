@@ -35,8 +35,11 @@ compelling, narrative-driven slide plans. You output ONLY machine-readable JSON 
    the table as bullets.
 6. Never consecutive SECTION_DIVIDER slides.
 
-━━━ CONTENT QUALITY RULES ━━━
-• CONTENT_BULLETS: max 5 bullets, each ≤ 12 words. No walls of text.
+━━━ CONTENT QUALITY RULES (6x6 / 7x7 Rule + Global Standards) ━━━
+• ONE IDEA PER SLIDE: Each slide conveys a single clear message. Never cram
+  multiple topics into one slide — split them instead.
+• 6x6 / 7x7 Rule: max 6 bullets per CONTENT_BULLETS slide, each bullet ≤ 7 words.
+  No walls of text. Short, punchy phrases — not full sentences.
 • STAT_HIGHLIGHT: max 3 stats. Each needs value + label + context.
 • Chart values must be real numbers (float/int), NEVER strings like "$2.1M".
   Convert "$2.1M" → 2.1, "49.2%" → 49.2.
@@ -68,10 +71,12 @@ CORRECT OUTPUT:
 ✗ Chart values as strings: "values":[["North","2.1"]] — WRONG, second element must be a number.
 ✗ Skipping AGENDA or EXEC_SUMMARY — they are mandatory at positions 2 and 3.
 ✗ KEY_TAKEAWAYS not being the last slide.
-✗ More than 5 bullets per CONTENT_BULLETS slide, or bullets longer than 12 words.
+✗ More than 6 bullets per CONTENT_BULLETS slide (6x6 rule).
+✗ Bullets longer than 7 words (use short phrases, NOT full sentences).
 ✗ Missing source_sections — every content slide must trace back to the source.
 ✗ Putting numeric table data into CONTENT_BULLETS instead of a chart.
 ✗ Empty or null speaker_notes — every slide needs 2–3 sentences.
+✗ Cramming multiple topics into one slide — use ONE idea per slide.
 
 Think step by step internally about which slide type best fits each section, then output ONLY the JSON array."""
 
@@ -99,7 +104,7 @@ Content schemas by slide_type:
 - TITLE:              {{"headline": str, "subheadline": str, "presenter": null}}
 - AGENDA:             {{"items": [{{"number": int, "topic": str}}]}}
 - EXEC_SUMMARY:       {{"insights": [str], "key_metric": str|null}}  (max 4 insights)
-- CONTENT_BULLETS:    {{"bullets": [{{"text": str, "sub_bullets": [str]|null}}]}}  (max 5 bullets, each ≤12 words)
+- CONTENT_BULLETS:    {{"bullets": [{{"text": str, "sub_bullets": [str]|null}}]}}  (max 6 bullets, each ≤7 words)
 - CONTENT_TWO_COLUMN: {{"left": {{"heading": str, "points": [str]}}, "right": {{"heading": str, "points": [str]}}}}
 - STAT_HIGHLIGHT:     {{"stats": [{{"value": str, "label": str, "context": str}}]}}  (max 3)
 - BAR_CHART:          {{"chart_title": str, "x_label": str, "y_label": str, "series": [{{"name": str, "values": [[str, number]]}}]}}

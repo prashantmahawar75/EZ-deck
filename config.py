@@ -72,22 +72,32 @@ FONT_SIZE_TITLE = 32
 FONT_SIZE_SECTION_HEADER = 40
 FONT_SIZE_BODY = 18
 FONT_SIZE_SMALL = 14
-FONT_SIZE_FOOTNOTE = 11
+FONT_SIZE_FOOTNOTE = 14         # Raised from 11 → 14 (global readability standard)
 FONT_SIZE_STAT_NUMBER = 60
 FONT_SIZE_STAT_LABEL = 18
-FONT_SIZE_STAT_CONTEXT = 12
+FONT_SIZE_STAT_CONTEXT = 14     # Raised from 12 → 14 (global readability standard)
 
 # ──────────────────────────────────────────────
 # Rendering limits
 # ──────────────────────────────────────────────
-MAX_BULLETS_PER_SLIDE = 5
-MAX_BULLET_WORDS = 12
+MAX_BULLETS_PER_SLIDE = 6      # 6x6 rule: max 6 lines per slide
+MAX_BULLET_WORDS = 7           # 6x6 rule: max 7 words per line (globally accepted)
+MAX_WORDS_PER_LINE = 7         # Alias for clarity — same as MAX_BULLET_WORDS
+MAX_LINES_PER_SLIDE = 7        # 7x7 rule: max 7 text lines per content area
 MAX_STATS_PER_SLIDE = 3
 MAX_TIMELINE_EVENTS = 7
 MAX_PROCESS_STEPS = 6
 MAX_TABLE_COLUMNS = 8
 MAX_TABLE_ROWS_PER_SLIDE = 12
 MAX_TAKEAWAYS = 5
+
+# ──────────────────────────────────────────────
+# Global Presentation Standards (10/20/30 rule + accessibility)
+# ──────────────────────────────────────────────
+FONT_SIZE_MINIMUM = 14         # 10/20/30 rule: no text below ~14pt for readability
+                               # (30pt is for projected slides; 14pt min for tables/footnotes)
+IMAGE_HALF_SLIDE_FRAC = 0.50   # Important images should fill >= 50% of usable area
+ONE_MINUTE_PER_SLIDE = True    # Design hint: ~1 min of talk time per slide
 
 # ──────────────────────────────────────────────
 # Chart rendering

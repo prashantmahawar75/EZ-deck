@@ -20,7 +20,9 @@ from config import (
     SLIDE_COUNT_EXTENDED_MIN,
     SLIDE_COUNT_EXTENDED_MAX,
     VALIDATION_PASS_THRESHOLD,
+    FONT_SIZE_MINIMUM,
     FONT_SIZE_FOOTNOTE,
+    MAX_LINES_PER_SLIDE,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,9 +116,13 @@ def validate_presentation(
     master_score = _check_master_compliance(prs, result)
     weights.append((0.05, master_score))
 
-    # 8. Accessibility
+    # 8. Accessibility (alt text + font size)
     a11y_score = _check_accessibility(prs, result)
-    weights.append((0.05, a11y_score))
+    weights.append((0.10, a11y_score))
+
+    # 9. Text density / 6x6 rule (no walls of text)
+    density_score = _check_text_density(prs, result)
+    weights.append((0.05, density_score))
 
     # Calculate weighted score
     total_weight = sum(w for w, _ in weights)
@@ -412,11 +418,11 @@ def _check_accessibility(prs: Presentation, result: ValidationResult) -> float:
                 except Exception:
                     pass
 
-            # Check for very small text
+            # Check for very small text (below global minimum)
             if shape.has_text_frame:
                 for para in shape.text_frame.paragraphs:
                     for run in para.runs:
-                        if run.font.size and run.font.size < FONT_SIZE_FOOTNOTE * 12700:  # Convert pt to emu
+                        if run.font.size and run.font.size < FONT_SIZE_MINIMUM * 12700:  # Convert pt to emu
                             small_text_count += 1
 
     score = 1.0
@@ -436,3 +442,43 @@ def _check_accessibility(prs: Presentation, result: ValidationResult) -> float:
         score -= 0.1
 
     return max(0.0, score)
+
+
+def _check_text_density(prs: Presentation, result: ValidationResult) -> float:
+    """Check text density per slide (6x6 / 7x7 rule).
+
+    Counts paragraph lines per content text frame. If any slide has
+    more than MAX_LINES_PER_SLIDE text paragraphs in a single frame,
+    flag it as too dense ("wall of text").
+
+    Args:
+        prs: Presentation object.
+        result: ValidationResult to update.
+
+    Returns:
+        Score from 0.0 to 1.0.
+    """
+    dense_slides = 0
+    total = len(prs.slides)
+
+    for i, slide in enumerate(prs.slides):
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            tf = shape.text_frame
+            # Count non-empty paragraphs (text lines)
+            line_count = sum(
+                1 for p in tf.paragraphs if p.text.strip()
+            )
+            if line_count > MAX_LINES_PER_SLIDE:
+                dense_slides += 1
+                result.warnings.append(
+                    f"Slide {i + 1} has {line_count} text lines in one frame "
+                    f"(max {MAX_LINES_PER_SLIDE} per 7x7 rule)"
+                )
+                break  # One dense frame is enough to flag the slide
+
+    if total == 0:
+        return 1.0
+
+    return max(0.0, 1.0 - (dense_slides / total))

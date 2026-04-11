@@ -15,10 +15,19 @@ from config import (
     SLIDE_COUNT_MAX,
     SLIDE_COUNT_DEFAULT,
     MAX_BULLETS_PER_SLIDE,
+    MAX_BULLET_WORDS,
     MIN_SECTION_WORD_COUNT,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _truncate_words(text: str, max_words: int = MAX_BULLET_WORDS) -> str:
+    """Truncate text to at most *max_words* words (6x6 / 7x7 rule)."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]) + "…"
 
 
 def plan_slides_fallback(
@@ -164,7 +173,7 @@ def plan_slides_fallback(
             if first_line and len(first_line) > 10:
                 takeaways.append({
                     "icon_hint": "✓",
-                    "text": first_line[:80],
+                    "text": _truncate_words(first_line, max_words=10),
                 })
             if len(takeaways) >= 5:
                 break
@@ -276,7 +285,7 @@ def _section_to_slide(
                             if isinstance(c, dict)
                         ]
                     bullet_items.append({
-                        "text": text[:80],
+                        "text": _truncate_words(text),
                         "sub_bullets": sub_bullets,
                     })
 
@@ -294,7 +303,7 @@ def _section_to_slide(
     # Default: paragraph → bullet points from sentences
     sentences = [s.strip() for s in body.split(".") if s.strip() and len(s.strip()) > 10]
     if sentences:
-        bullet_items = [{"text": s[:80], "sub_bullets": None} for s in sentences[:MAX_BULLETS_PER_SLIDE]]
+        bullet_items = [{"text": _truncate_words(s), "sub_bullets": None} for s in sentences[:MAX_BULLETS_PER_SLIDE]]
         return {
             "slide_number": slide_num,
             "slide_type": "CONTENT_BULLETS",
