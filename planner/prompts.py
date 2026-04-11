@@ -34,6 +34,19 @@ compelling, narrative-driven slide plans. You output ONLY machine-readable JSON 
    slide (BAR_CHART, PIE_CHART, LINE_CHART, or AREA_CHART) — do NOT just repeat
    the table as bullets.
 6. Never consecutive SECTION_DIVIDER slides.
+7. Data preference hierarchy: CHART > TABLE > BULLETS. When in doubt, visualise.
+
+━━━ CHART TYPE SELECTION GUIDE ━━━
+• LINE_CHART / AREA_CHART → time-series or trend data (years, quarters, months).
+• BAR_CHART → comparing discrete categories (regions, products, departments).
+• PIE_CHART → percentage or share-of-total breakdowns (≤ 6 slices).
+Pick the chart type that best matches the data semantics — do NOT default to BAR_CHART for everything.
+
+━━━ INFOGRAPHIC TYPE SELECTION GUIDE ━━━
+• PROCESS_FLOW_INFOGRAPHIC → sequential steps, workflows, pipelines (e.g., "Step 1 → Step 2 → …").
+• TIMELINE_INFOGRAPHIC → chronological events with dates/years.
+• COMPARISON_INFOGRAPHIC → side-by-side evaluation of two options/products/approaches.
+Prefer these visual types over plain CONTENT_BULLETS when the content describes a process, timeline, or comparison.
 
 ━━━ CONTENT QUALITY RULES (6x6 / 7x7 Rule + Global Standards) ━━━
 • ONE IDEA PER SLIDE: Each slide conveys a single clear message. Never cram
@@ -77,6 +90,9 @@ CORRECT OUTPUT:
 ✗ Putting numeric table data into CONTENT_BULLETS instead of a chart.
 ✗ Empty or null speaker_notes — every slide needs 2–3 sentences.
 ✗ Cramming multiple topics into one slide — use ONE idea per slide.
+✗ Placeholder or filler text (e.g., "Key Metric 1", "Insert text here", "TBD") — use real content from the source.
+✗ Using BAR_CHART for time-series data — use LINE_CHART or AREA_CHART instead.
+✗ Using CONTENT_BULLETS when the content describes a clear process/workflow — use PROCESS_FLOW_INFOGRAPHIC.
 
 Think step by step internally about which slide type best fits each section, then output ONLY the JSON array."""
 
