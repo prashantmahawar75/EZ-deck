@@ -36,7 +36,7 @@ SLIDE_COUNT_MIN = 10
 SLIDE_COUNT_MAX = 15
 SLIDE_COUNT_DEFAULT = 12
 SLIDE_COUNT_EXTENDED_MIN = 8   # Relaxed range when target can't be met
-SLIDE_COUNT_EXTENDED_MAX = 17
+SLIDE_COUNT_EXTENDED_MAX = 15  # Hard cap per hackathon requirement (10-15)
 
 API_RETRY_COUNT = 3
 API_RETRY_DELAYS_SEC = [2, 4, 8]  # Exponential backoff

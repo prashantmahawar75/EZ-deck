@@ -211,7 +211,7 @@ def plan_slides_fallback(
     from config import SLIDE_COUNT_EXTENDED_MAX
     slots_needed = len(content_sections) + 4  # +4 for TITLE, AGENDA, EXEC_SUMMARY, KEY_TAKEAWAYS
     effective_max = min(SLIDE_COUNT_EXTENDED_MAX, max(target_count, slots_needed))
-    max_content_slide_num = effective_max - 1  # Reserve 1 for KEY_TAKEAWAYS
+    max_content_slide_num = effective_max - 2  # Reserve 2 for KEY_TAKEAWAYS + Thank You
 
     # Determine which sections get which slide type
     for sec in content_sections:
