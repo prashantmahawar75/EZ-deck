@@ -268,19 +268,25 @@ class MarkdownToPPTXPipeline:
                     slide_plan = plan_slides_ollama(ast_dict, self.target_slides, retry_hints, insights=insights)
                 elif PLANNER_BACKEND == "anthropic":
                     slide_plan = plan_slides(ast_dict, self.target_slides, retry_hints, insights=insights)
+                elif PLANNER_BACKEND == "fallback":
+                    # Explicitly use fallback only when configured
+                    logger.info("Using rule-based fallback planner (configured)")
+                    slide_plan = plan_slides_fallback(ast_dict, self.target_slides, insights=insights)
                 else:
-                    # "fallback" or unknown → skip AI
-                    pass
+                    raise PlannerError(f"Unknown PLANNER_BACKEND: {PLANNER_BACKEND}")
             except Exception as exc:
-                logger.warning("AI planner error: %s — falling back", exc)
-                result.warnings.append(f"AI planner fallback: {exc}")
-
-        if not slide_plan:
-            logger.info("Using rule-based fallback planner")
+                # AI planner failed - do NOT fallback, raise the error
+                logger.error("AI planner error: %s", exc)
+                result.warnings.append(f"AI planner error: {exc}")
+                raise PlannerError(f"AI planner failed: {exc}") from exc
+        else:
+            # use_ai=False means explicitly use fallback
+            logger.info("Using rule-based fallback planner (use_ai=False)")
             try:
                 slide_plan = plan_slides_fallback(ast_dict, self.target_slides, insights=insights)
             except Exception as exc:
-                logger.error("Fallback planner also failed: %s", exc)
+                logger.error("Fallback planner failed: %s", exc)
                 result.warnings.append(f"Fallback planner error: {exc}")
+                raise PlannerError(f"Fallback planner failed: {exc}") from exc
 
         return slide_plan
