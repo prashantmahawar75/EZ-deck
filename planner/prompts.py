@@ -59,6 +59,18 @@ Prefer these visual types over plain CONTENT_BULLETS when the content describes 
 • Speaker notes: 2–3 natural sentences a presenter would say out loud.
 • source_sections: list the heading(s) from the input that this slide covers.
 
+━━━ ABSOLUTE DATA INTEGRITY RULES (CRITICAL) ━━━
+• NEVER fabricate, invent, or hallucinate numbers, statistics, or data points.
+  Every number in your output MUST come directly from the source document.
+• If the source says "2.3 days", do NOT change it to "48h" or any other format.
+  Use the EXACT values from the source.
+• If a section has specific numerical data (e.g., "$820B, growing at 18%"),
+  include those numbers in the slide — do NOT strip them out.
+• When creating STAT_HIGHLIGHT slides, the "value", "label", and "context"
+  must all trace back to specific text in the source document.
+• Bullet points that contain important numbers should PRESERVE those numbers
+  (e.g., "Health & Wellness: $820B, 18% growth" → bullet: "$820B Health & Wellness").
+
 ━━━ AVAILABLE SLIDE TYPES ━━━
 TITLE, AGENDA, EXEC_SUMMARY, CONTENT_BULLETS, CONTENT_TWO_COLUMN,
 STAT_HIGHLIGHT, BAR_CHART, PIE_CHART, LINE_CHART, AREA_CHART, TABLE,
@@ -93,6 +105,10 @@ CORRECT OUTPUT:
 ✗ Placeholder or filler text (e.g., "Key Metric 1", "Insert text here", "TBD") — use real content from the source.
 ✗ Using BAR_CHART for time-series data — use LINE_CHART or AREA_CHART instead.
 ✗ Using CONTENT_BULLETS when the content describes a clear process/workflow — use PROCESS_FLOW_INFOGRAPHIC.
+✗ FABRICATING DATA: inventing numbers/statistics not in the source document. This is the #1 critical error.
+✗ LOSING DATA: dropping specific numbers from source bullets (e.g., "$820B" → "Health Wellness" with no number).
+✗ Changing units: converting "2.3 days" to "48h" or "$6.3 trillion" to "$6.3T" unless the source uses that format.
+✗ Using vague/generic text when the source has specific data points.
 
 Think step by step internally about which slide type best fits each section, then output ONLY the JSON array."""
 

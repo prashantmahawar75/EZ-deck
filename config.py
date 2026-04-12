@@ -117,9 +117,9 @@ ONE_MINUTE_PER_SLIDE = True    # Design hint: ~1 min of talk time per slide
 # ──────────────────────────────────────────────
 # Chart rendering
 # ──────────────────────────────────────────────
-CHART_DPI = 150
-CHART_FIGURE_WIDTH = 10
-CHART_FIGURE_HEIGHT = 6
+CHART_DPI = 200
+CHART_FIGURE_WIDTH = 11
+CHART_FIGURE_HEIGHT = 6.5
 
 # ──────────────────────────────────────────────
 # Validator

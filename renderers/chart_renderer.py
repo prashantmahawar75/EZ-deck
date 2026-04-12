@@ -51,12 +51,15 @@ def _setup_style(palette: list[str] | None = None, font_family: str | None = Non
     plt.rcParams.update({
         "font.family": "sans-serif",
         "font.sans-serif": [font, "Arial", "Helvetica", "DejaVu Sans"],
-        "font.size": 12,
-        "axes.labelsize": 13,
-        "axes.titlesize": 16,
-        "xtick.labelsize": 11,
-        "ytick.labelsize": 11,
-        "legend.fontsize": 11,
+        "font.size": 13,
+        "axes.labelsize": 14,
+        "axes.titlesize": 17,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
+        "legend.fontsize": 12,
+        "figure.facecolor": "none",
+        "axes.facecolor": "none",
+        "savefig.facecolor": "none",
     })
 
     return colors, font
@@ -137,7 +140,7 @@ def render_bar_chart(
             label=s.get("name", f"Series {idx + 1}"),
             color=_cycle_color(colors, idx),
             edgecolor="white",
-            linewidth=0.5,
+            linewidth=0.8,
             zorder=3,
         )
 
@@ -147,8 +150,8 @@ def render_bar_chart(
                 ax.text(
                     bar.get_x() + bar.get_width() / 2, bar.get_height(),
                     f"{val:,.1f}" if isinstance(val, float) and val != int(val) else f"{int(val):,}",
-                    ha="center", va="bottom", fontsize=9, fontweight="bold",
-                    color="#333333",
+                    ha="center", va="bottom", fontsize=10, fontweight="bold",
+                    color="#2A2A2A",
                 )
 
     ax.set_xticks(x)
@@ -237,10 +240,10 @@ def render_pie_chart(
     )
 
     for text in texts:
-        text.set_fontsize(11)
+        text.set_fontsize(12)
         text.set_color("#333333")
     for autotext in autotexts:
-        autotext.set_fontsize(10)
+        autotext.set_fontsize(11)
         autotext.set_fontweight("bold")
         autotext.set_color("white")
 

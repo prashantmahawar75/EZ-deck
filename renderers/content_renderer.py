@@ -41,6 +41,32 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+def _safe_icon_text(icon_hint: Any) -> str:
+    text = str(icon_hint or "").strip()
+    if not text:
+        return "+"
+
+    fallback_map = {
+        "✓": "+",
+        "✔": "+",
+        "✦": "*",
+        "★": "*",
+        "⚡": "!",
+        "⚠": "!",
+        "📈": "^",
+        "📉": "v",
+        "→": ">",
+    }
+    if text in fallback_map:
+        return fallback_map[text]
+    if all(ord(ch) < 128 for ch in text):
+        return text[:1]
+    for source, fallback in fallback_map.items():
+        if source in text:
+            return fallback
+    return "+"
+
+
 def _dims() -> dict[str, float]:
     """Compute layout dimensions from config fractions.
 
@@ -438,10 +464,10 @@ def render_two_column_slide(
     left_data = content.get("left", {})
     right_data = content.get("right", {})
 
-    col_width = (d["usable_w"] - 0.5) / 2  # 0.5 inch gap
+    col_width = (d["usable_w"] - 0.6) / 2  # 0.6 inch gap
 
     for col_idx, col_data in enumerate([left_data, right_data]):
-        x = d["lm"] + col_idx * (col_width + 0.5)
+        x = d["lm"] + col_idx * (col_width + 0.6)
         heading = col_data.get("heading", "")
         points = col_data.get("points", [])
 
@@ -593,7 +619,7 @@ def render_stat_highlight_slide(
         # Label — supporting text
         label_box = slide.shapes.add_textbox(
             Inches(sx + 0.15),
-            Inches(card_top + 1.6),
+            Inches(card_top + 1.7),
             Inches(card_w - 0.3),
             Inches(0.6),
         )
@@ -603,7 +629,7 @@ def render_stat_highlight_slide(
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = stat.get("label", "").upper()
-        run.font.size = Pt(12)
+        run.font.size = Pt(13)
         run.font.bold = True
         run.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
         run.font.name = font_name
@@ -613,7 +639,7 @@ def render_stat_highlight_slide(
         if context:
             ctx_box = slide.shapes.add_textbox(
                 Inches(sx + 0.15),
-                Inches(card_top + 2.15),
+                Inches(card_top + 2.25),
                 Inches(card_w - 0.3),
                 Inches(0.6),
             )
@@ -699,12 +725,13 @@ def render_key_takeaways_slide(
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
-        run.text = ta.get("icon_hint", "✓")
+        run.text = _safe_icon_text(ta.get("icon_hint", "+"))
         run.font.size = Pt(13)
+        run.font.bold = True
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
         run.font.name = font_name
 
-        # Takeaway text
+        # Takeaway text — vertically centered in card
         txbox = slide.shapes.add_textbox(
             Inches(d["lm"] + 1.15),
             Inches(iy + 0.08),
@@ -714,6 +741,10 @@ def render_key_takeaways_slide(
         tf = txbox.text_frame
         tf.word_wrap = True
         tf.auto_size = None
+        try:
+            tf.paragraphs[0].space_before = Pt(0)
+        except Exception:
+            pass
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.LEFT
         run = p.add_run()

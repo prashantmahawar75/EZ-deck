@@ -48,6 +48,12 @@ Rules:
 - Keep speaker_notes SHORT. Keep bullet text SHORT.
 - VARIETY IS CRITICAL: use at least 4 different slide types beyond the fixed ones (TITLE/AGENDA/EXEC_SUMMARY/KEY_TAKEAWAYS)
 
+CRITICAL DATA RULES:
+- NEVER fabricate or invent numbers. Every value MUST come from the source document.
+- PRESERVE specific numbers in bullets (e.g., "$820B at 18% growth" not just "Health Wellness")
+- Use EXACT values from source. Do NOT convert units (e.g., keep "2.3 days" as-is, don't change to "48h")
+- When source has specific data points, include them — do NOT replace with vague text.
+
 Type selection guide:
 - 2-3 key numbers/stats/KPIs → STAT_HIGHLIGHT
 - Market share, distribution, composition → PIE_CHART
@@ -72,6 +78,8 @@ OLLAMA_USER = """Generate a JSON slide plan for this document.
 Title: {title}
 Sections: {section_summary}
 
+{raw_content_block}
+
 {insights_block}
 
 Target: {target_count} slides
@@ -95,6 +103,7 @@ SECTION_DIVIDER: {{"slide_number":N,"slide_type":"SECTION_DIVIDER","title":"..."
 KEY_TAKEAWAYS: {{"slide_number":N,"slide_type":"KEY_TAKEAWAYS","title":"Key Takeaways","subtitle":null,"content":{{"takeaways":[{{"icon_hint":"📈","text":"..."}}]}},"speaker_notes":"...","source_sections":[]}}
 
 IMPORTANT: Prefer STAT_HIGHLIGHT, TABLE, PIE_CHART, COMPARISON_INFOGRAPHIC, PROCESS_FLOW_INFOGRAPHIC, TIMELINE_INFOGRAPHIC over plain CONTENT_BULLETS when data supports it.
+IMPORTANT: Use EXACT numbers from the source document. NEVER invent data.
 
 Output the JSON array now. Start with [ and end with ]."""
 
@@ -226,6 +235,29 @@ def _build_insights_block(insights: Any) -> str:
     return "\n".join(parts)
 
 
+def _build_raw_content_block(ast_dict: dict[str, Any]) -> str:
+    """Build raw content block with actual text from each section.
+
+    This ensures the LLM sees exact numbers and data points from the source,
+    preventing hallucination and data loss.
+    """
+    sections = ast_dict.get("sections", [])
+    parts = ["RAW SECTION CONTENT (use exact values from here, do NOT fabricate):"]
+    total_chars = 0
+    max_chars = 6000  # Keep prompt manageable for local LLMs
+
+    for sec in sections:
+        heading = sec.get("heading", "?")
+        body = sec.get("body", "").strip()
+        if body and total_chars < max_chars:
+            # Truncate individual sections to keep total manageable
+            truncated = body[:800] if len(body) > 800 else body
+            parts.append("--- {} ---\n{}".format(heading, truncated))
+            total_chars += len(truncated)
+
+    return "\n".join(parts) if len(parts) > 1 else ""
+
+
 def plan_slides_ollama(
     ast_dict: dict[str, Any],
     target_count: int = SLIDE_COUNT_DEFAULT,
@@ -250,6 +282,7 @@ def plan_slides_ollama(
 
     model = OLLAMA_REASONING_MODEL
     insights_block = _build_insights_block(insights)
+    raw_content_block = _build_raw_content_block(ast_dict)
 
     system_msg = OLLAMA_SYSTEM.format(
         min_slides=SLIDE_COUNT_MIN,
@@ -261,6 +294,7 @@ def plan_slides_ollama(
         section_summary=_build_section_summary(ast_dict),
         target_count=target_count,
         insights_block=insights_block,
+        raw_content_block=raw_content_block,
     )
 
     if retry_hints:
@@ -399,6 +433,12 @@ def _fix_common_json_issues(text: str) -> str | None:
     fixed = text
     # Remove trailing commas before ] or }
     fixed = re.sub(r',\s*([}\]])', r'\1', fixed)
+    # Some local models emit one extra closing brace before late slide fields
+    fixed = re.sub(
+        r'}}(\s*,\s*"(?:speaker_notes|source_sections)")',
+        r'}\1',
+        fixed,
+    )
     # Remove any embedded <think> blocks within JSON
     fixed = re.sub(r'<think>.*?</think>', '', fixed, flags=re.DOTALL)
     fixed = re.sub(r'<think>[^<]*$', '', fixed)  # unclosed at end

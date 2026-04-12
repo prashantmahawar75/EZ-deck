@@ -296,9 +296,9 @@ def _create_chart_slide(
         rm = sw * MARGIN_RIGHT_FRAC
         usable_w = sw - lm - rm
 
-        # Center the chart image
-        img_width = usable_w * 0.85
-        img_height = content_h * 0.85
+        # Center the chart image — fill most of the content area
+        img_width = usable_w * 0.92
+        img_height = content_h * 0.92
         img_left = lm + (usable_w - img_width) / 2
         img_top = content_top + (content_h - img_height) / 2
 

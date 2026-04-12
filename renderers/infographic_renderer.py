@@ -8,6 +8,7 @@ using native shapes (NOT images) for maximum scalability and theme compliance.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from pptx import presentation as pptx_presentation
@@ -31,6 +32,42 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_text(text: Any) -> str:
+    return " ".join(str(text or "").split()).strip()
+
+
+def _numeric_value(text: Any) -> float | None:
+    cleaned = _normalize_text(text)
+    if not cleaned or cleaned.lower() in {"n/a", "na", "none", "-"}:
+        return None
+
+    match = re.search(r"([-+]?\d[\d,]*\.?\d*)\s*([KkMmBbTt%]?)", cleaned)
+    if not match:
+        return None
+
+    value = float(match.group(1).replace(",", ""))
+    suffix = match.group(2).lower()
+    multipliers = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12, "%": 1}
+    return value * multipliers.get(suffix, 1)
+
+
+def _prefer_lower(aspect: str) -> bool:
+    aspect_lower = _normalize_text(aspect).lower()
+    return any(keyword in aspect_lower for keyword in (
+        "cost", "churn", "time", "latency", "delay", "error", "risk", "payback",
+    ))
+
+
+def _winner_side(aspect: str, left: Any, right: Any) -> str | None:
+    left_num = _numeric_value(left)
+    right_num = _numeric_value(right)
+    if left_num is None or right_num is None or left_num == right_num:
+        return None
+    if _prefer_lower(aspect):
+        return "left" if left_num < right_num else "right"
+    return "left" if left_num > right_num else "right"
 
 
 def render_timeline(
@@ -188,8 +225,25 @@ def render_process_flow(
     steps = steps[:MAX_PROCESS_STEPS]
     accent = accent_color or RGBColor(0x2E, 0x86, 0xAB)
     dark_text = RGBColor(0x33, 0x33, 0x33)
+    light_text = RGBColor(0x66, 0x66, 0x66)
     white = RGBColor(0xFF, 0xFF, 0xFF)
     light_bg = RGBColor(0xF5, 0xF5, 0xF5)
+
+    normalized_steps = []
+    for index, step in enumerate(steps, 1):
+        title = _normalize_text(step.get("title", ""))
+        desc = _normalize_text(step.get("description", ""))
+        if not desc and len(title) > 34:
+            words = title.split()
+            split_at = 5 if len(words) >= 8 else 4
+            title = " ".join(words[:split_at])
+            desc = " ".join(words[split_at:])
+        normalized_steps.append({
+            "number": step.get("number", index),
+            "title": title,
+            "description": desc,
+        })
+    steps = normalized_steps
 
     sw = SLIDE_WIDTH_INCHES
     sh = SLIDE_HEIGHT_INCHES
@@ -214,13 +268,24 @@ def render_process_flow(
 
         for row_idx, row_steps in enumerate(rows):
             cols = len(row_steps)
-            box_width = min(2.5, (usable_width - (cols - 1) * 0.5) / cols)
-            box_height = row_height * 0.7
+            box_width = min(3.2, (usable_width - (cols - 1) * 0.5) / cols)
+            box_height = row_height * 0.74
             gap = (usable_width - cols * box_width) / max(cols - 1, 1) if cols > 1 else 0
-            gap = min(gap, 1.0)
+            gap = min(gap, 0.85)
             total_w = cols * box_width + (cols - 1) * gap
             start_x = left_margin + (usable_width - total_w) / 2
             row_top = content_top + row_idx * row_height + (row_height - box_height) / 2
+            max_title_len = max(len(step.get("title", "")) for step in row_steps)
+            has_desc = any(step.get("description") for step in row_steps)
+            title_pt = 15 if cols <= 3 else 14
+            if max_title_len > 28:
+                title_pt -= 1
+            if max_title_len > 36:
+                title_pt -= 2
+            if has_desc:
+                title_pt -= 1
+            title_pt = max(title_pt, 11)
+            desc_pt = max(title_pt - 2, 10)
 
             for i, step in enumerate(row_steps):
                 bx = start_x + i * (box_width + gap)
@@ -265,13 +330,19 @@ def render_process_flow(
                 # Title and description inside the box
                 tf = shape.text_frame
                 tf.word_wrap = True
-                tf.paragraphs[0].space_before = Pt(16)
+                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                tf.margin_left = Pt(8)
+                tf.margin_right = Pt(8)
+                tf.margin_top = Pt(10)
+                tf.margin_bottom = Pt(8)
+                tf.paragraphs[0].space_before = Pt(0)
+                tf.paragraphs[0].space_after = Pt(0)
 
                 p_title = tf.paragraphs[0]
                 p_title.alignment = PP_ALIGN.CENTER
                 run_title = p_title.add_run()
                 run_title.text = step.get("title", "")
-                run_title.font.size = Pt(FONT_SIZE_SMALL)
+                run_title.font.size = Pt(title_pt)
                 run_title.font.bold = True
                 run_title.font.color.rgb = dark_text
                 run_title.font.name = font_name
@@ -280,11 +351,12 @@ def render_process_flow(
                 if desc:
                     p_desc = tf.add_paragraph()
                     p_desc.alignment = PP_ALIGN.CENTER
-                    p_desc.space_before = Pt(4)
+                    p_desc.space_before = Pt(5)
+                    p_desc.space_after = Pt(0)
                     run_desc = p_desc.add_run()
-                    run_desc.text = desc[:60]
-                    run_desc.font.size = Pt(FONT_SIZE_FOOTNOTE)
-                    run_desc.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+                    run_desc.text = desc[:90]
+                    run_desc.font.size = Pt(desc_pt)
+                    run_desc.font.color.rgb = light_text
                     run_desc.font.name = font_name
 
                 # Arrow to next step (if not the last in the row)
@@ -307,6 +379,9 @@ def render_process_flow(
         box_width = usable_width * 0.5
         box_height = min(1.0, (content_height - (n - 1) * 0.2) / n)
         start_x = left_margin + (usable_width - box_width) / 2
+        max_title_len = max(len(step.get("title", "")) for step in steps)
+        title_pt = 15 if max_title_len <= 28 else 13
+        desc_pt = max(title_pt - 2, 10)
 
         for i, step in enumerate(steps):
             by = content_top + i * (box_height + 0.3)
@@ -349,11 +424,18 @@ def render_process_flow(
             # Text in the box
             tf = shape.text_frame
             tf.word_wrap = True
+            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            tf.margin_left = Pt(10)
+            tf.margin_right = Pt(10)
+            tf.margin_top = Pt(8)
+            tf.margin_bottom = Pt(8)
             p = tf.paragraphs[0]
             p.alignment = PP_ALIGN.LEFT
+            p.space_before = Pt(0)
+            p.space_after = Pt(0)
             run = p.add_run()
             run.text = step.get("title", "")
-            run.font.size = Pt(FONT_SIZE_SMALL)
+            run.font.size = Pt(title_pt)
             run.font.bold = True
             run.font.color.rgb = dark_text
             run.font.name = font_name
@@ -362,10 +444,12 @@ def render_process_flow(
             if desc:
                 p2 = tf.add_paragraph()
                 p2.alignment = PP_ALIGN.LEFT
+                p2.space_before = Pt(4)
+                p2.space_after = Pt(0)
                 run2 = p2.add_run()
-                run2.text = desc[:80]
-                run2.font.size = Pt(FONT_SIZE_FOOTNOTE)
-                run2.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+                run2.text = desc[:110]
+                run2.font.size = Pt(desc_pt)
+                run2.font.color.rgb = light_text
                 run2.font.name = font_name
 
             # Down arrow
@@ -411,6 +495,10 @@ def render_comparison(
     white = RGBColor(0xFF, 0xFF, 0xFF)
     light_bg = RGBColor(0xF5, 0xF7, 0xFA)
     alt_bg = RGBColor(0xE8, 0xEC, 0xF1)
+    winner_bg = RGBColor(0xE6, 0xF0, 0xFB)
+    winner_line = RGBColor(0x7D, 0xA7, 0xD9)
+    muted_bg = RGBColor(0xFB, 0xFC, 0xFD)
+    secondary_header = RGBColor(0x5C, 0x6B, 0x7A)
 
     sw = SLIDE_WIDTH_INCHES
     sh = SLIDE_HEIGHT_INCHES
@@ -463,7 +551,7 @@ def render_comparison(
         Inches(header_height),
     )
     right_header.fill.solid()
-    right_header.fill.fore_color.rgb = accent
+    right_header.fill.fore_color.rgb = secondary_header
     right_header.line.fill.background()
     tf = right_header.text_frame
     tf.word_wrap = True
@@ -505,68 +593,93 @@ def render_comparison(
     for i, dim in enumerate(dimensions[:max_dims]):
         ry = row_top + i * (row_height + 0.08)
         bg = light_bg if i % 2 == 0 else alt_bg
+        winner = _winner_side(dim.get("aspect", ""), dim.get("left", ""), dim.get("right", ""))
+        left_bg = winner_bg if winner == "left" else bg
+        right_bg = winner_bg if winner == "right" else bg
+        left_line = winner_line if winner == "left" else RGBColor(0xDD, 0xE4, 0xED)
+        right_line = winner_line if winner == "right" else RGBColor(0xDD, 0xE4, 0xED)
 
         # Left cell
         left_cell = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
+            MSO_SHAPE.ROUNDED_RECTANGLE,
             Inches(left_x),
             Inches(ry),
             Inches(side_width),
             Inches(row_height),
         )
         left_cell.fill.solid()
-        left_cell.fill.fore_color.rgb = bg
-        left_cell.line.fill.background()
+        left_cell.fill.fore_color.rgb = left_bg
+        left_cell.line.color.rgb = left_line
+        left_cell.line.width = Pt(1.2)
         tf = left_cell.text_frame
         tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = Pt(10)
+        tf.margin_right = Pt(10)
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
+        p.space_before = Pt(0)
+        p.space_after = Pt(0)
         run = p.add_run()
-        run.text = dim.get("left", "")
-        run.font.size = Pt(FONT_SIZE_SMALL)
+        run.text = _normalize_text(dim.get("left", ""))
+        run.font.size = Pt(13)
+        run.font.bold = winner == "left"
         run.font.color.rgb = dark_text
         run.font.name = font_name
 
         # Center cell (aspect label)
         center_cell = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            Inches(center_x),
-            Inches(ry),
-            Inches(center_width),
-            Inches(row_height),
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(center_x + 0.08),
+            Inches(ry + 0.04),
+            Inches(center_width - 0.16),
+            Inches(row_height - 0.08),
         )
         center_cell.fill.solid()
-        center_cell.fill.fore_color.rgb = RGBColor(0xE3, 0xE8, 0xEF)
-        center_cell.line.fill.background()
+        center_cell.fill.fore_color.rgb = muted_bg
+        center_cell.line.color.rgb = RGBColor(0xD4, 0xDE, 0xE8)
+        center_cell.line.width = Pt(1)
         tf = center_cell.text_frame
         tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = Pt(6)
+        tf.margin_right = Pt(6)
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
+        p.space_before = Pt(0)
+        p.space_after = Pt(0)
         run = p.add_run()
-        run.text = dim.get("aspect", "")
-        run.font.size = Pt(FONT_SIZE_SMALL)
+        run.text = _normalize_text(dim.get("aspect", ""))
+        run.font.size = Pt(12)
         run.font.bold = True
         run.font.color.rgb = accent
         run.font.name = font_name
 
         # Right cell
         right_cell = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
+            MSO_SHAPE.ROUNDED_RECTANGLE,
             Inches(right_x),
             Inches(ry),
             Inches(side_width),
             Inches(row_height),
         )
         right_cell.fill.solid()
-        right_cell.fill.fore_color.rgb = bg
-        right_cell.line.fill.background()
+        right_cell.fill.fore_color.rgb = right_bg
+        right_cell.line.color.rgb = right_line
+        right_cell.line.width = Pt(1.2)
         tf = right_cell.text_frame
         tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = Pt(10)
+        tf.margin_right = Pt(10)
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
+        p.space_before = Pt(0)
+        p.space_after = Pt(0)
         run = p.add_run()
-        run.text = dim.get("right", "")
-        run.font.size = Pt(FONT_SIZE_SMALL)
+        run.text = _normalize_text(dim.get("right", ""))
+        run.font.size = Pt(13)
+        run.font.bold = winner == "right"
         run.font.color.rgb = dark_text
         run.font.name = font_name
 

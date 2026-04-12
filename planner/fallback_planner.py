@@ -23,11 +23,49 @@ logger = logging.getLogger(__name__)
 
 
 def _truncate_words(text: str, max_words: int = MAX_BULLET_WORDS) -> str:
-    """Truncate text to at most *max_words* words (6x6 / 7x7 rule)."""
+    """Truncate text to at most *max_words* words (6x6 / 7x7 rule).
+
+    Uses a higher limit for data-rich text to avoid losing important numbers.
+    """
     words = text.split()
     if len(words) <= max_words:
         return text
-    return " ".join(words[:max_words]) + "…"
+    # If text contains numbers/data, allow slightly more words to preserve them
+    import re
+    has_numbers = bool(re.search(r'[\$€£₹¥]\s*[\d,.]+|[\d,.]+\s*%', text))
+    effective_max = max_words + 3 if has_numbers else max_words
+    if len(words) <= effective_max:
+        return text
+    return " ".join(words[:effective_max]) + "…"
+
+
+def _split_process_step_text(text: str) -> tuple[str, str]:
+    """Split a long action item into a short title and optional detail line."""
+    cleaned = " ".join(text.split()).strip().rstrip(".")
+    if not cleaned:
+        return "", ""
+
+    if ":" in cleaned and cleaned.index(":") < 30:
+        head, tail = cleaned.split(":", 1)
+        return head.strip(), tail.strip()
+
+    lowered = cleaned.lower()
+    for marker in (" to ", " by ", " with ", " for ", " after ", " in "):
+        marker_idx = lowered.find(marker)
+        if marker_idx >= 18:
+            title = cleaned[:marker_idx].strip(" ,;-")
+            detail = cleaned[marker_idx:].strip()
+            if len(title.split()) >= 3:
+                return title, _truncate_words(detail, max_words=8)
+
+    words = cleaned.split()
+    if len(words) <= 5 and len(cleaned) <= 34:
+        return cleaned, ""
+
+    title_words = 5 if len(words) >= 8 else 4
+    title = " ".join(words[:title_words]).strip()
+    detail = " ".join(words[title_words:]).strip()
+    return title, _truncate_words(detail, max_words=8) if detail else ""
 
 
 def plan_slides_fallback(
@@ -147,7 +185,7 @@ def plan_slides_fallback(
     # Skip sections that duplicate structural slides (TITLE, AGENDA, EXEC_SUMMARY)
     STRUCTURAL_HEADINGS = {
         "executive summary", "agenda", "table of contents",
-        "conclusion", "summary",
+        "conclusion", "summary", "executive overview",
     }
     content_sections = [
         s for s in _merge_small_sections(sections)
@@ -297,16 +335,93 @@ def _section_to_slide(
                     "source_sections": [heading],
                 }
 
-    # Check for chart-worthy data signals
+    # ── Check for list blocks FIRST (before generic data signals) ──
+    # Lists with data should become BAR_CHART or PROCESS_FLOW, not STAT_HIGHLIGHT
+    bullet_items = []
+    has_data_in_list = False
+    has_list_blocks = False
+    import re as _re
     for block in blocks:
+        if block["type"] in ("bullet_list", "ordered_list"):
+            has_list_blocks = True
+            items = block.get("content", [])
+            for item in items:
+                text = item.get("text", "") if isinstance(item, dict) else str(item)
+                if text.strip():
+                    if _re.search(r'[\$€£₹¥]\s*[\d,.]+|[\d,.]+\s*%', text):
+                        has_data_in_list = True
+                    sub_bullets = None
+                    if isinstance(item, dict) and "children" in item:
+                        sub_bullets = [
+                            c.get("text", "") for c in item["children"]
+                            if isinstance(c, dict)
+                        ]
+                    bullet_items.append({
+                        "text": _truncate_words(text, max_words=10),
+                        "raw_text": text,
+                        "sub_bullets": sub_bullets,
+                    })
+
+    if bullet_items:
+        # Data-rich lists with currency/percentage → BAR_CHART
+        if has_data_in_list and len(bullet_items) >= 3:
+            bar_data = _try_extract_bar_from_list(bullet_items, heading)
+            if bar_data:
+                bar_data["slide_number"] = slide_num
+                bar_data["source_sections"] = [heading]
+                bar_data["speaker_notes"] = speaker_notes
+                return bar_data
+
+        # Detect process/recommendation/steps patterns → PROCESS_FLOW
+        heading_lower = heading.lower()
+        is_process = any(kw in heading_lower for kw in [
+            "recommend", "strateg", "step", "action", "roadmap",
+            "plan", "workflow", "process", "pipeline", "implementation",
+        ])
+        if is_process and 3 <= len(bullet_items) <= 6:
+            steps = []
+            for i, item in enumerate(bullet_items[:6]):
+                title, description = _split_process_step_text(item.get("raw_text") or item["text"])
+                steps.append({
+                    "number": i + 1,
+                    "title": title or item["text"],
+                    "description": description,
+                })
+            return {
+                "slide_number": slide_num,
+                "slide_type": "PROCESS_FLOW_INFOGRAPHIC",
+                "title": heading,
+                "subtitle": None,
+                "content": {
+                    "steps": steps,
+                    "flow_direction": "horizontal",
+                },
+                "speaker_notes": speaker_notes,
+                "source_sections": [heading],
+            }
+
+        # Detect challenge/risk/comparison patterns → CONTENT_BULLETS (keep as-is)
+        return {
+            "slide_number": slide_num,
+            "slide_type": "CONTENT_BULLETS",
+            "title": heading,
+            "subtitle": None,
+            "content": {"bullets": bullet_items[:MAX_BULLETS_PER_SLIDE]},
+            "speaker_notes": speaker_notes,
+            "source_sections": [heading],
+        }
+
+    # ── Check for chart-worthy data signals on non-list blocks ──
+    for block in blocks:
+        if block["type"] in ("bullet_list", "ordered_list"):
+            continue  # Already handled above
         signals = block.get("data_signals", [])
         for sig in signals:
             chart_hint = sig.get("chart_hint", "")
             if chart_hint == "PIE_CHART" and block["type"] == "table":
                 table_content = block.get("content", {})
                 return _make_pie_chart_slide(heading, table_content, slide_num)
-            elif chart_hint in ("BAR_CHART", "LINE_CHART"):
-                # Create a stat highlight as fallback (we don't have clean data without AI)
+            elif chart_hint == "STAT_HIGHLIGHT":
                 stats = _extract_stats_from_signals(signals)
                 if stats:
                     return {
@@ -315,39 +430,9 @@ def _section_to_slide(
                         "title": heading,
                         "subtitle": None,
                         "content": {"stats": stats[:3]},
-                        "speaker_notes": f"Key statistics from {heading}.",
+                        "speaker_notes": speaker_notes,
                         "source_sections": [heading],
                     }
-
-    # Check for list blocks → bullet slide
-    bullet_items = []
-    for block in blocks:
-        if block["type"] in ("bullet_list", "ordered_list"):
-            items = block.get("content", [])
-            for item in items:
-                text = item.get("text", "") if isinstance(item, dict) else str(item)
-                if text.strip():
-                    sub_bullets = None
-                    if isinstance(item, dict) and "children" in item:
-                        sub_bullets = [
-                            c.get("text", "") for c in item["children"]
-                            if isinstance(c, dict)
-                        ]
-                    bullet_items.append({
-                        "text": _truncate_words(text),
-                        "sub_bullets": sub_bullets,
-                    })
-
-    if bullet_items:
-        return {
-            "slide_number": slide_num,
-            "slide_type": "CONTENT_BULLETS",
-            "title": heading,
-            "subtitle": None,
-            "content": {"bullets": bullet_items[:MAX_BULLETS_PER_SLIDE]},
-            "speaker_notes": f"Key points about {heading}.",
-            "source_sections": [heading],
-        }
 
     # Default: paragraph → bullet points from sentences
     sentences = [s.strip() for s in body.split(".") if s.strip() and len(s.strip()) > 10]
@@ -435,6 +520,136 @@ def _extract_stats_from_signals(signals: list[dict[str, Any]]) -> list[dict[str,
             if len(stats) >= 3:
                 return stats
     return stats
+
+
+def _try_extract_bar_from_list(
+    bullet_items: list[dict[str, Any]],
+    heading: str,
+) -> dict[str, Any] | None:
+    """Try to extract bar chart data from data-rich bullet points.
+
+    Parses bullets like "Health & Wellness: $820B, growing at 18%" into chart values.
+
+    Returns:
+        Bar chart slide plan dict, or None if the data can't be extracted cleanly.
+    """
+    import re
+
+    # Multiplier map for suffixes like B(illion), M(illion), K, T(rillion)
+    _MULT_LABEL = {"k": "K", "m": "M", "b": "B", "t": "T"}
+    _MULT_VAL = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12}
+
+    # Collect raw values with their suffix for later normalization
+    raw_entries: list[tuple[str, float, str]] = []  # (label, raw_num, suffix)
+    extracted_units: list[str] = []
+    has_currency_prefix = False
+
+    for item in bullet_items:
+        text = item.get("text", "")
+
+        # Try pattern: "Label: $NNN[B/M/K/T]" or "Label — $NNN"
+        match = re.search(
+            r'^[*\d.)\s]*(.+?)[:—–]\s*([\$€£₹¥]?)\s*([\d,.]+)\s*([KkMmBbTt](?:rillion|illion)?)?',
+            text,
+        )
+        if match:
+            label = match.group(1).strip().rstrip("*").strip()
+            currency_sym = match.group(2)
+            num_str = match.group(3).replace(",", "")
+            suffix = (match.group(4) or "")[0:1].lower()
+            try:
+                num = float(num_str)
+                raw_entries.append((label[:30], num, suffix))
+                if currency_sym:
+                    has_currency_prefix = True
+                    extracted_units.append("currency")
+                else:
+                    after = text[match.end():]
+                    if re.match(r'\s*%', after):
+                        extracted_units.append("pct")
+                    elif re.match(r'\s*(days?|hours?|months?|years?)', after):
+                        extracted_units.append("time")
+                    else:
+                        extracted_units.append("plain")
+            except ValueError:
+                continue
+        else:
+            # Try alternative: "Label $NNN" without colon
+            match2 = re.search(
+                r'^[*\d.)\s]*(.+?)\s+([\$€£₹¥])\s*([\d,.]+)\s*([KkMmBbTt](?:rillion|illion)?)?',
+                text,
+            )
+            if match2:
+                label = match2.group(1).strip().rstrip("*:—–").strip()
+                num_str = match2.group(3).replace(",", "")
+                suffix = (match2.group(4) or "")[0:1].lower()
+                try:
+                    num = float(num_str)
+                    raw_entries.append((label[:30], num, suffix))
+                    has_currency_prefix = True
+                    extracted_units.append("currency")
+                except ValueError:
+                    continue
+
+    if len(raw_entries) >= 3:
+        # Sanity check: extracted values must have consistent units
+        unique_units = set(extracted_units)
+        unique_units.discard("plain")
+        if len(unique_units) > 1:
+            return None
+
+        # Normalize all values to a common magnitude suffix
+        from collections import Counter as _C
+        suffixes_seen = [e[2] for e in raw_entries if e[2]]
+        if suffixes_seen:
+            target_suffix = _C(suffixes_seen).most_common(1)[0][0]
+            target_mult = _MULT_VAL.get(target_suffix, 1)
+        else:
+            target_suffix = ""
+            target_mult = 1
+
+        values = []
+        for label, num, suffix in raw_entries:
+            entry_mult = _MULT_VAL.get(suffix, 1) if suffix else 1
+            # Normalize: convert to target unit
+            if target_mult > 0:
+                normalized = num * entry_mult / target_mult
+            else:
+                normalized = num
+            values.append([label, round(normalized, 1)])
+
+        # Values should be in a comparable range
+        nums = [v[1] for v in values]
+        max_val = max(nums)
+        min_val = min(n for n in nums if n > 0) if any(n > 0 for n in nums) else 1
+        ratio = max_val / min_val if min_val > 0 else float('inf')
+        if ratio > 50:
+            return None
+
+        # Build y_label
+        common_label = _MULT_LABEL.get(target_suffix, "")
+        if has_currency_prefix and common_label:
+            y_label = f"$ ({common_label})"
+        elif has_currency_prefix:
+            y_label = "$"
+        elif common_label:
+            y_label = common_label
+        else:
+            y_label = ""
+
+        return {
+            "slide_number": 0,
+            "slide_type": "BAR_CHART",
+            "title": heading,
+            "subtitle": None,
+            "content": {
+                "chart_title": heading,
+                "series": [{"name": "Value", "values": values}],
+                "x_label": "",
+                "y_label": y_label,
+            },
+        }
+    return None
 
 
 def _make_bar_chart_from_table(
