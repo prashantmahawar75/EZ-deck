@@ -246,7 +246,9 @@ def _create_chart_slide(
         style: MasterStyle with palette.
         prs: Presentation object.
     """
-    chart_title = content.get("chart_title", "")
+    # NOTE: Don't pass chart_title to renderer - slide already has a title, 
+    # adding chart title creates redundant duplication
+    chart_title = ""  # BUG FIX: Always empty to avoid duplicate titles
     x_label = content.get("x_label", "")
     y_label = content.get("y_label", "")
 

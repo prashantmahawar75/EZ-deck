@@ -150,13 +150,13 @@ def render_title_slide(
     run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
     run.font.name = font_name
 
-    # Subheadline — lighter, smaller
+    # Subheadline — lighter, smaller, with proper text box sizing to avoid truncation
     if subheadline:
         txbox2 = slide.shapes.add_textbox(
             Inches(d["lm"] + 0.3),
             Inches(d["sh"] * 0.58),
-            Inches(d["usable_w"] * 0.7),
-            Inches(d["sh"] * 0.12),
+            Inches(d["usable_w"] * 0.9),  # BUG FIX: Increased from 0.7 to 0.9 for full subtitle
+            Inches(d["sh"] * 0.22),  # BUG FIX: Increased from 0.12 to 0.22 for multi-line subtitles
         )
         tf2 = txbox2.text_frame
         tf2.word_wrap = True
@@ -199,8 +199,9 @@ def render_agenda_slide(
     for i, item in enumerate(items):
         iy = start_y + i * item_height
 
-        # Number circle
-        circle_size = 0.42
+        # Number circle - slightly larger for 2-digit numbers
+        item_number = item.get("number", i + 1)
+        circle_size = 0.48 if item_number >= 10 else 0.42
         circle = slide.shapes.add_shape(
             MSO_SHAPE.OVAL,
             Inches(start_x),
@@ -214,13 +215,16 @@ def render_agenda_slide(
 
         tf = circle.text_frame
         tf.auto_size = None  # Prevent auto-sizing
+        tf.word_wrap = False  # CRITICAL: Prevent text wrapping for 2-digit numbers
+        # Vertical centering within circle
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
+        p.space_before = Pt(0)
+        p.space_after = Pt(0)
         run = p.add_run()
-        item_number = item.get("number", i + 1)
         run.text = str(item_number)
-        # BUG 10 FIX: Reduce font size for 2-digit numbers to fit in badge
-        badge_font_size = 10 if item_number >= 10 else 14
+        # BUG 10 FIX: Font size for badges - keep readable for 2-digits
+        badge_font_size = 12 if item_number >= 10 else 14
         run.font.size = Pt(badge_font_size)
         run.font.bold = True
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
@@ -271,14 +275,25 @@ def render_exec_summary_slide(
     # ── KEY METRIC: BIG NUMBER at top-left for visual hierarchy ──
     # BUG 1 FIX: Ensure proper vertical spacing and remove overlapping label
     if key_metric:
-        # Large metric value — the hero element (top half: 1 inch from content_top, height ~1.8 inches)
+        metric_str = str(key_metric)
         metric_top = d["content_top"]
-        metric_height = 1.8  # Fixed height for metric area
+        
+        # Dynamically size based on text length to prevent overlap
+        # Short metrics (numbers like "72" or "$1.2M") get big font + small area
+        # Long metrics (sentences) get smaller font + larger area
+        is_long_metric = len(metric_str) > 25
+        
+        if is_long_metric:
+            metric_font_size = 36  # Smaller font for long text
+            metric_height = 2.2  # More height for wrapping
+        else:
+            metric_font_size = 52  # Big font for short numbers
+            metric_height = 1.4  # Less height needed
         
         metric_box = slide.shapes.add_textbox(
             Inches(d["lm"] + 0.3),
             Inches(metric_top),
-            Inches(d["usable_w"] * 0.6),
+            Inches(d["usable_w"] * 0.85),  # Wider box to reduce wrapping
             Inches(metric_height),
         )
         tf = metric_box.text_frame
@@ -286,14 +301,13 @@ def render_exec_summary_slide(
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.LEFT
         run = p.add_run()
-        run.text = str(key_metric)
-        run.font.size = Pt(52)
+        run.text = metric_str
+        run.font.size = Pt(metric_font_size)
         run.font.bold = True
         run.font.color.rgb = accent
         run.font.name = font_name
 
         # NOTE: Removed "KEY METRIC" label to avoid overlap and visual clutter
-        # The large font size and accent color already signal importance
 
         # Accent underline below metric
         line = slide.shapes.add_shape(
@@ -308,7 +322,7 @@ def render_exec_summary_slide(
         line.line.fill.background()
 
         # CRITICAL: Insights start BELOW metric area with clear separation
-        insight_top = metric_top + metric_height + 0.3
+        insight_top = metric_top + metric_height + 0.4
     else:
         insight_top = d["content_top"] + 0.2
 
