@@ -46,9 +46,25 @@ Rules:
 - Max 6 bullets, each ≤7 words
 - Every slide needs speaker_notes (2-3 sentences)
 - Keep speaker_notes SHORT. Keep bullet text SHORT.
+- VARIETY IS CRITICAL: use at least 4 different slide types beyond the fixed ones (TITLE/AGENDA/EXEC_SUMMARY/KEY_TAKEAWAYS)
 
-Slide types: TITLE, AGENDA, EXEC_SUMMARY, CONTENT_BULLETS, STAT_HIGHLIGHT,
-BAR_CHART, PIE_CHART, LINE_CHART, TABLE, KEY_TAKEAWAYS, SECTION_DIVIDER"""
+Type selection guide:
+- 2-3 key numbers/stats/KPIs → STAT_HIGHLIGHT
+- Market share, distribution, composition → PIE_CHART
+- Trends over time → LINE_CHART or AREA_CHART
+- Comparisons across categories → BAR_CHART
+- Raw tabular data (many columns) → TABLE
+- Sequential steps/process → PROCESS_FLOW_INFOGRAPHIC
+- Chronological events/milestones → TIMELINE_INFOGRAPHIC
+- Two things compared (pros/cons, before/after) → COMPARISON_INFOGRAPHIC
+- Two parallel topics → CONTENT_TWO_COLUMN
+- Transition between major topics → SECTION_DIVIDER
+- General points → CONTENT_BULLETS (use sparingly, prefer visual types)
+
+All types: TITLE, AGENDA, EXEC_SUMMARY, CONTENT_BULLETS, CONTENT_TWO_COLUMN,
+STAT_HIGHLIGHT, BAR_CHART, PIE_CHART, LINE_CHART, AREA_CHART, TABLE,
+TIMELINE_INFOGRAPHIC, PROCESS_FLOW_INFOGRAPHIC, COMPARISON_INFOGRAPHIC,
+KEY_TAKEAWAYS, SECTION_DIVIDER"""
 
 # ── Compact user prompt with inline schemas ──
 OLLAMA_USER = """Generate a JSON slide plan for this document.
@@ -65,10 +81,20 @@ TITLE: {{"slide_number":1,"slide_type":"TITLE","title":"...","subtitle":null,"co
 AGENDA: {{"slide_number":2,"slide_type":"AGENDA","title":"Agenda","subtitle":null,"content":{{"items":[{{"number":1,"topic":"..."}}]}},"speaker_notes":"...","source_sections":[]}}
 EXEC_SUMMARY: {{"slide_number":3,"slide_type":"EXEC_SUMMARY","title":"Executive Summary","subtitle":null,"content":{{"insights":["..."],"key_metric":"..."}},"speaker_notes":"...","source_sections":["..."]}}
 CONTENT_BULLETS: {{"slide_number":N,"slide_type":"CONTENT_BULLETS","title":"...","subtitle":null,"content":{{"bullets":[{{"text":"...","sub_bullets":null}}]}},"speaker_notes":"...","source_sections":["..."]}}
+CONTENT_TWO_COLUMN: {{"slide_number":N,"slide_type":"CONTENT_TWO_COLUMN","title":"...","subtitle":null,"content":{{"left":{{"heading":"...","points":["..."]}},"right":{{"heading":"...","points":["..."]}}}},"speaker_notes":"...","source_sections":["..."]}}
+STAT_HIGHLIGHT: {{"slide_number":N,"slide_type":"STAT_HIGHLIGHT","title":"...","subtitle":null,"content":{{"stats":[{{"value":"$2.5M","label":"Revenue","context":"Up 25% YoY"}}]}},"speaker_notes":"...","source_sections":["..."]}}
 BAR_CHART: {{"slide_number":N,"slide_type":"BAR_CHART","title":"...","subtitle":null,"content":{{"chart_title":"...","x_label":"...","y_label":"...","series":[{{"name":"...","values":[["Label",123]]}}]}},"speaker_notes":"...","source_sections":["..."]}}
 PIE_CHART: {{"slide_number":N,"slide_type":"PIE_CHART","title":"...","subtitle":null,"content":{{"chart_title":"...","slices":[{{"label":"...","value":45}}]}},"speaker_notes":"...","source_sections":["..."]}}
 LINE_CHART: {{"slide_number":N,"slide_type":"LINE_CHART","title":"...","subtitle":null,"content":{{"chart_title":"...","x_label":"...","y_label":"...","series":[{{"name":"...","points":[["2020",100]]}}]}},"speaker_notes":"...","source_sections":["..."]}}
+AREA_CHART: {{"slide_number":N,"slide_type":"AREA_CHART","title":"...","subtitle":null,"content":{{"chart_title":"...","x_label":"...","y_label":"...","series":[{{"name":"...","points":[["2020",100]]}}]}},"speaker_notes":"...","source_sections":["..."]}}
+TABLE: {{"slide_number":N,"slide_type":"TABLE","title":"...","subtitle":null,"content":{{"table_title":"...","headers":["Col1","Col2","Col3"],"rows":[["a","b","c"]]}},"speaker_notes":"...","source_sections":["..."]}}
+TIMELINE_INFOGRAPHIC: {{"slide_number":N,"slide_type":"TIMELINE_INFOGRAPHIC","title":"...","subtitle":null,"content":{{"events":[{{"year":"2020","title":"...","description":"..."}}]}},"speaker_notes":"...","source_sections":["..."]}}
+PROCESS_FLOW_INFOGRAPHIC: {{"slide_number":N,"slide_type":"PROCESS_FLOW_INFOGRAPHIC","title":"...","subtitle":null,"content":{{"steps":[{{"number":1,"title":"...","description":"..."}}],"flow_direction":"horizontal"}},"speaker_notes":"...","source_sections":["..."]}}
+COMPARISON_INFOGRAPHIC: {{"slide_number":N,"slide_type":"COMPARISON_INFOGRAPHIC","title":"...","subtitle":null,"content":{{"left_label":"Option A","right_label":"Option B","dimensions":[{{"aspect":"Cost","left":"$100","right":"$200"}}]}},"speaker_notes":"...","source_sections":["..."]}}
+SECTION_DIVIDER: {{"slide_number":N,"slide_type":"SECTION_DIVIDER","title":"...","subtitle":null,"content":{{"section_number":1,"section_title":"...","section_subtitle":"..."}},"speaker_notes":"...","source_sections":[]}}
 KEY_TAKEAWAYS: {{"slide_number":N,"slide_type":"KEY_TAKEAWAYS","title":"Key Takeaways","subtitle":null,"content":{{"takeaways":[{{"icon_hint":"📈","text":"..."}}]}},"speaker_notes":"...","source_sections":[]}}
+
+IMPORTANT: Prefer STAT_HIGHLIGHT, TABLE, PIE_CHART, COMPARISON_INFOGRAPHIC, PROCESS_FLOW_INFOGRAPHIC, TIMELINE_INFOGRAPHIC over plain CONTENT_BULLETS when data supports it.
 
 Output the JSON array now. Start with [ and end with ]."""
 
