@@ -213,11 +213,15 @@ def render_agenda_slide(
         circle.line.fill.background()
 
         tf = circle.text_frame
+        tf.auto_size = None  # Prevent auto-sizing
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
-        run.text = str(item.get("number", i + 1))
-        run.font.size = Pt(14)
+        item_number = item.get("number", i + 1)
+        run.text = str(item_number)
+        # BUG 10 FIX: Reduce font size for 2-digit numbers to fit in badge
+        badge_font_size = 10 if item_number >= 10 else 14
+        run.font.size = Pt(badge_font_size)
         run.font.bold = True
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
         run.font.name = font_name
@@ -265,13 +269,17 @@ def render_exec_summary_slide(
         return
 
     # ── KEY METRIC: BIG NUMBER at top-left for visual hierarchy ──
+    # BUG 1 FIX: Ensure proper vertical spacing and remove overlapping label
     if key_metric:
-        # Large metric value — the hero element
+        # Large metric value — the hero element (top half: 1 inch from content_top, height ~1.8 inches)
+        metric_top = d["content_top"]
+        metric_height = 1.8  # Fixed height for metric area
+        
         metric_box = slide.shapes.add_textbox(
             Inches(d["lm"] + 0.3),
-            Inches(d["content_top"] - 0.1),
-            Inches(d["usable_w"] * 0.5),
-            Inches(1.4),
+            Inches(metric_top),
+            Inches(d["usable_w"] * 0.6),
+            Inches(metric_height),
         )
         tf = metric_box.text_frame
         tf.word_wrap = True
@@ -279,33 +287,19 @@ def render_exec_summary_slide(
         p.alignment = PP_ALIGN.LEFT
         run = p.add_run()
         run.text = str(key_metric)
-        run.font.size = Pt(56)
+        run.font.size = Pt(52)
         run.font.bold = True
         run.font.color.rgb = accent
         run.font.name = font_name
 
-        # "Key Metric" label below
-        label_box = slide.shapes.add_textbox(
-            Inches(d["lm"] + 0.3),
-            Inches(d["content_top"] + 1.2),
-            Inches(d["usable_w"] * 0.5),
-            Inches(0.4),
-        )
-        tf = label_box.text_frame
-        p = tf.paragraphs[0]
-        p.alignment = PP_ALIGN.LEFT
-        run = p.add_run()
-        run.text = "KEY METRIC"
-        run.font.size = Pt(11)
-        run.font.bold = True
-        run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
-        run.font.name = font_name
+        # NOTE: Removed "KEY METRIC" label to avoid overlap and visual clutter
+        # The large font size and accent color already signal importance
 
         # Accent underline below metric
         line = slide.shapes.add_shape(
             MSO_SHAPE.RECTANGLE,
             Inches(d["lm"] + 0.3),
-            Inches(d["content_top"] + 1.6),
+            Inches(metric_top + metric_height + 0.1),
             Inches(d["usable_w"] * 0.4),
             Inches(0.04),
         )
@@ -313,7 +307,8 @@ def render_exec_summary_slide(
         line.fill.fore_color.rgb = accent
         line.line.fill.background()
 
-        insight_top = d["content_top"] + 1.9
+        # CRITICAL: Insights start BELOW metric area with clear separation
+        insight_top = metric_top + metric_height + 0.3
     else:
         insight_top = d["content_top"] + 0.2
 

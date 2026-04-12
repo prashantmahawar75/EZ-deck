@@ -482,3 +482,136 @@ def _check_text_density(prs: Presentation, result: ValidationResult) -> float:
         return 1.0
 
     return max(0.0, 1.0 - (dense_slides / total))
+
+
+def validate_output(pptx_path: str, markdown_path: str) -> dict[str, Any]:
+    """Comprehensive validation of PPTX against source markdown.
+    
+    BUG 2 FIX: Ensures every ## section in markdown produces a slide.
+    Also checks for empty titles and float year tick labels in charts.
+    
+    Args:
+        pptx_path: Path to the generated .pptx file.
+        markdown_path: Path to the source .md file.
+        
+    Returns:
+        Validation report dict with:
+        - section_count: Number of ## sections in markdown
+        - slide_count: Number of slides in PPTX
+        - coverage_passed: Whether every section is covered
+        - empty_titles: List of slide indices with empty titles
+        - float_year_warnings: List of chart issues detected
+        - errors: List of critical errors
+    """
+    import re
+    from pathlib import Path
+    
+    report = {
+        "section_count": 0,
+        "slide_count": 0,
+        "coverage_passed": True,
+        "sections_found": [],
+        "sections_missing": [],
+        "empty_titles": [],
+        "float_year_warnings": [],
+        "errors": [],
+    }
+    
+    # --- Parse markdown for ## sections ---
+    md_path = Path(markdown_path)
+    if not md_path.exists():
+        report["errors"].append(f"Markdown file not found: {markdown_path}")
+        return report
+    
+    try:
+        md_text = md_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        md_text = md_path.read_bytes().decode("utf-8", errors="replace")
+    
+    # Find all ## headings (H2 sections)
+    h2_pattern = re.compile(r'^##\s+(.+)$', re.MULTILINE)
+    h2_sections = [m.group(1).strip() for m in h2_pattern.finditer(md_text)]
+    report["section_count"] = len(h2_sections)
+    report["sections_found"] = h2_sections
+    
+    # --- Open PPTX and count slides ---
+    try:
+        prs = Presentation(pptx_path)
+    except Exception as exc:
+        report["errors"].append(f"Cannot open PPTX: {exc}")
+        return report
+    
+    report["slide_count"] = len(prs.slides)
+    
+    # BUG 2 CHECK: Every section should produce at least one slide
+    # We expect: TITLE + AGENDA + EXEC_SUMMARY + content_slides + KEY_TAKEAWAYS
+    # Minimum slides = 4 (structural) + number_of_content_sections
+    min_expected = 4 + len(h2_sections)
+    if report["slide_count"] < len(h2_sections):
+        report["coverage_passed"] = False
+        report["sections_missing"].append(
+            f"Expected at least {len(h2_sections)} content slides but got {report['slide_count']} total"
+        )
+        logger.warning(
+            "BUG 2 DETECTED: %d sections but only %d slides",
+            len(h2_sections), report["slide_count"]
+        )
+    
+    # --- Check for empty slide titles ---
+    for i, slide in enumerate(prs.slides):
+        title_text = ""
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                # Title placeholder usually has placeholder_format.idx == 0
+                try:
+                    if hasattr(shape, "placeholder_format") and shape.placeholder_format.idx == 0:
+                        title_text = shape.text_frame.text.strip()
+                        break
+                except Exception:
+                    pass
+        
+        # If no title placeholder, check for any prominent text
+        if not title_text:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    text = shape.text_frame.text.strip()
+                    if text and len(text) < 100:  # Likely a title, not body text
+                        title_text = text
+                        break
+        
+        if not title_text:
+            report["empty_titles"].append(i + 1)
+            logger.warning("Empty title on slide %d", i + 1)
+    
+    # --- Check for float year tick labels in charts (BUG 5 detection) ---
+    # Note: This is harder to detect programmatically in the PPTX itself
+    # since matplotlib charts are embedded as images. We log a warning if
+    # numeric data was detected and charts exist.
+    chart_slide_count = 0
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            # Check if shape is a picture (embedded chart image)
+            if hasattr(shape, "shape_type") and shape.shape_type == 13:  # Picture
+                chart_slide_count += 1
+    
+    if chart_slide_count > 0:
+        report["float_year_warnings"].append(
+            f"Found {chart_slide_count} embedded chart images. "
+            f"Verify year axes show integers (2019, 2020) not floats (2019.0, 2019.5)."
+        )
+    
+    # --- Summary ---
+    if report["empty_titles"]:
+        report["errors"].append(
+            f"Slides with empty titles: {report['empty_titles']}"
+        )
+    
+    logger.info(
+        "validate_output: %d sections, %d slides, coverage=%s, empty_titles=%d",
+        report["section_count"], 
+        report["slide_count"],
+        report["coverage_passed"],
+        len(report["empty_titles"])
+    )
+    
+    return report

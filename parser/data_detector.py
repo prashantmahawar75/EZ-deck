@@ -39,6 +39,110 @@ YEAR_PATTERN = re.compile(r'\b(19|20)\d{2}\b')
 # Generic numbers (for numeric density detection)
 NUMBER_PATTERN = re.compile(r'\b\d+\.?\d*\b')
 
+# BUG 6 FIX: Pattern to detect bullet lists with year:value format
+# Matches: "- 2019: 12%", "- 2020: -7%", "- 2021: $45M"
+BULLET_NUMERIC_PATTERN = re.compile(
+    r'^[-*•]\s*(\d{4})\s*:\s*([+-]?\$?€?£?[\d,.]+)\s*[%KMBkmb]?.*$',
+    re.MULTILINE
+)
+
+
+def parse_bullet_as_chart_data(lines: list[str]) -> list[dict[str, Any]] | None:
+    """BUG 6 FIX: Parse bullet list lines into chart-ready data.
+    
+    Detects patterns like:
+    - 2019: 12%
+    - 2020: -7%
+    - 2021: 23%
+    
+    Args:
+        lines: List of bullet point text lines.
+        
+    Returns:
+        List of {year, value} dicts if pattern matches, else None.
+    """
+    results = []
+    year_value_pattern = re.compile(r'^(\d{4})\s*:\s*([+-]?\$?€?£?[\d,.]+)\s*[%KMBkmb]?')
+    
+    for line in lines:
+        # Strip bullet markers
+        cleaned = re.sub(r'^[-*•]\s*', '', line.strip())
+        m = year_value_pattern.match(cleaned)
+        if not m:
+            return None  # Not a numeric bullet list
+        
+        try:
+            year = int(m.group(1))
+            # Clean value: remove currency symbols and commas
+            val_str = m.group(2).replace('$', '').replace('€', '').replace('£', '').replace(',', '')
+            value = float(val_str)
+            results.append({"year": year, "value": value})
+        except (ValueError, TypeError):
+            return None
+    
+    # Need at least 3 data points for a meaningful chart
+    return results if len(results) >= 3 else None
+
+
+def should_be_chart(table_data: list[dict[str, Any]], headers: list[str] | None = None) -> tuple[bool, str]:
+    """BUG 4 & 7 FIX: Strict decision function for chart vs table rendering.
+    
+    Args:
+        table_data: List of row dicts with column values.
+        headers: Optional column headers for semantic analysis.
+        
+    Returns:
+        Tuple of (should_render_as_chart, chart_type).
+        chart_type is one of: "line", "pie", "bar", "table"
+    """
+    if not table_data:
+        return False, "table"
+    
+    columns = list(table_data[0].keys())
+    if len(columns) < 2:
+        return False, "table"
+    
+    first_col = columns[0]
+    second_col = columns[1]
+    first_col_values = [row.get(first_col, "") for row in table_data]
+    second_col_values = [row.get(second_col, "") for row in table_data]
+    
+    # Rule 1: If first column is year-like (2000-2035), it's a TIME SERIES → line chart
+    try:
+        years = [int(str(v).strip()) for v in first_col_values]
+        if all(2000 <= y <= 2035 for y in years):
+            return True, "line"
+    except (ValueError, TypeError):
+        pass
+    
+    # Rule 2: BUG 7 FIX - If second column header contains share/allocation/distribution → pie chart
+    if headers and len(headers) >= 2:
+        second_header_lower = headers[1].lower()
+        pie_keywords = ["share", "%", "percent", "allocation", "distribution", "portion", "ratio"]
+        if any(kw in second_header_lower for kw in pie_keywords):
+            return True, "pie"
+    
+    # Also check if values look like percentages
+    pct_count = 0
+    for v in second_col_values:
+        v_str = str(v).strip()
+        if '%' in v_str or v_str.endswith('percent'):
+            pct_count += 1
+    if pct_count >= len(second_col_values) * 0.7:
+        return True, "pie"
+    
+    # Rule 3: If rows are named entities with one numeric column → bar chart
+    try:
+        # Check if second column is numeric
+        for v in second_col_values:
+            cleaned = str(v).replace('%', '').replace('$', '').replace(',', '').strip()
+            float(cleaned)
+        return True, "bar"
+    except (ValueError, TypeError):
+        pass
+    
+    return False, "table"
+
 
 def detect_data_signals(text: str) -> list[dict[str, Any]]:
     """Analyze text for data visualization signals.

@@ -91,15 +91,30 @@ def plan_slides_fallback(
     slides: list[dict[str, Any]] = []
     slide_num = 1
 
+    # BUG 8 FIX: Extract subtitle from first paragraph of Executive Summary or first section
+    # instead of showing raw word count metadata
+    subtitle = None
+    for sec in sections:
+        body = sec.get("body", "").strip()
+        if body:
+            # Get first sentence, max 120 chars
+            first_sentence = body.split(".")[0].strip()
+            if first_sentence and len(first_sentence) > 10:
+                subtitle = first_sentence[:120] + ("..." if len(first_sentence) > 120 else "")
+                break
+    if not subtitle:
+        # Fallback to filename-based subtitle
+        subtitle = f"Presentation overview"
+
     # ── Slide 1: Title ──
     slides.append({
         "slide_number": slide_num,
         "slide_type": "TITLE",
         "title": title,
-        "subtitle": None,
+        "subtitle": subtitle,
         "content": {
             "headline": title,
-            "subheadline": f"A {metadata.get('word_count', 0)}-word document overview",
+            "subheadline": subtitle,
             "presenter": None,
         },
         "speaker_notes": f"This presentation covers the key points from the document '{title}'.",
@@ -264,6 +279,33 @@ def plan_slides_fallback(
         "subtitle": None,
         "content": {"takeaways": takeaways[:5]},
         "speaker_notes": "These are the top takeaways from our presentation.",
+        "source_sections": [],
+    })
+    slide_num += 1
+
+    # BUG 3 FIX: Always add a conclusion/closing slide
+    # Check if markdown has a ## Conclusion section
+    conclusion_text = None
+    for sec in sections:
+        heading_lower = sec.get("heading", "").lower().strip()
+        if heading_lower in ("conclusion", "summary", "closing", "final thoughts"):
+            body = sec.get("body", "").strip()
+            if body:
+                # Use first sentence of conclusion
+                conclusion_text = body.split(".")[0].strip()[:120]
+                break
+    
+    slides.append({
+        "slide_number": slide_num,
+        "slide_type": "SECTION_DIVIDER",
+        "title": "Thank You",
+        "subtitle": conclusion_text or f"Generated from {title}",
+        "content": {
+            "section_number": None,
+            "section_title": "Thank You",
+            "section_subtitle": conclusion_text or f"Presentation generated from {title}",
+        },
+        "speaker_notes": "Thank you for your attention. Questions?",
         "source_sections": [],
     })
 

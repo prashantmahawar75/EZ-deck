@@ -338,6 +338,30 @@ def render_line_chart(
     ax.spines["bottom"].set_color("#CCCCCC")
 
     ax.yaxis.grid(True, color="#E0E0E0", alpha=0.5, zorder=0)
+    
+    # BUG 5 FIX: Force integer X-axis ticks for year-based data
+    # Collect all numeric x values to determine if they're years
+    all_x_numeric = []
+    for s in series:
+        for pt in s.get("points", []):
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                try:
+                    xv = float(pt[0])
+                    all_x_numeric.append(xv)
+                except (ValueError, TypeError):
+                    pass
+    
+    if all_x_numeric:
+        # Check if x values are year-like (integers between 1900-2100)
+        all_integers = all(x == int(x) for x in all_x_numeric)
+        in_year_range = all(1900 <= x <= 2100 for x in all_x_numeric)
+        
+        if all_integers and in_year_range:
+            # Force integer ticks for year data
+            ax.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+            unique_x = sorted(set(int(x) for x in all_x_numeric))
+            ax.set_xticks(unique_x)
+            ax.set_xticklabels([str(x) for x in unique_x])
     ax.xaxis.grid(False)
 
     if len(series) > 1:
