@@ -333,38 +333,7 @@ def render_bullets_slide(
     if not bullets:
         return
 
-    # Try to use content placeholder
-    for ph in slide.placeholders:
-        if ph.placeholder_format.idx == 1:  # Content placeholder
-            tf = ph.text_frame
-            tf.clear()
-            for i, bullet in enumerate(bullets):
-                p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-                p.level = 0
-                p.space_before = Pt(6)
-                p.line_spacing = 1.3
-                run = p.add_run()
-                text = bullet.get("text", "") if isinstance(bullet, dict) else str(bullet)
-                run.text = f"• {text}"
-                run.font.size = Pt(FONT_SIZE_BODY)
-                run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-                run.font.name = font_name
-
-                # Sub-bullets
-                sub_bullets = bullet.get("sub_bullets") if isinstance(bullet, dict) else None
-                if sub_bullets:
-                    for sb in sub_bullets[:3]:
-                        p_sub = tf.add_paragraph()
-                        p_sub.level = 1
-                        p_sub.space_before = Pt(2)
-                        run_sub = p_sub.add_run()
-                        run_sub.text = f"  – {sb}"
-                        run_sub.font.size = Pt(FONT_SIZE_SMALL)
-                        run_sub.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
-                        run_sub.font.name = font_name
-            return
-
-    # Fallback: manual text box
+    # Always use manual text box (placeholder content doesn't render reliably)
     txbox = slide.shapes.add_textbox(
         Inches(d["lm"] + 0.3),
         Inches(d["content_top"]),
