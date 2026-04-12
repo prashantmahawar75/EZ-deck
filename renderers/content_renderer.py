@@ -79,35 +79,7 @@ def render_title_slide(
     accent = accent_color or RGBColor(0x2E, 0x86, 0xAB)
     d = _dims()
 
-    # Try to use the layout's placeholders first
-    used_placeholders = False
-    for ph in slide.placeholders:
-        if ph.placeholder_format.idx == 0:  # Title
-            ph.text = content.get("headline", "")
-            for p in ph.text_frame.paragraphs:
-                for run in p.runs:
-                    run.font.name = font_name
-            used_placeholders = True
-        elif ph.placeholder_format.idx == 1:  # Subtitle
-            subheadline = content.get("subheadline", "")
-            presenter = content.get("presenter", "")
-            ph.text = subheadline
-            if presenter:
-                p = ph.text_frame.add_paragraph()
-                run = p.add_run()
-                run.text = f"\n{presenter}"
-                run.font.size = Pt(FONT_SIZE_SMALL)
-                run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
-                run.font.name = font_name
-            for p in ph.text_frame.paragraphs:
-                for run in p.runs:
-                    run.font.name = font_name
-            used_placeholders = True
-
-    if used_placeholders:
-        return
-
-    # Fallback: create text boxes manually with dark accent background
+    # Always use manual layout for consistent visual styling
     headline = content.get("headline", "")
     subheadline = content.get("subheadline", "")
 
@@ -592,7 +564,15 @@ def render_stat_highlight_slide(
         stripe.fill.fore_color.rgb = card_color
         stripe.line.fill.background()
 
-        # BIG NUMBER — hero element
+        # BIG NUMBER — hero element (auto-scale for text values)
+        value_text = str(stat.get("value", ""))
+        if len(value_text) <= 6:
+            stat_font = Pt(FONT_SIZE_STAT_NUMBER)  # 60pt for short numbers
+        elif len(value_text) <= 12:
+            stat_font = Pt(36)
+        else:
+            stat_font = Pt(24)
+
         num_box = slide.shapes.add_textbox(
             Inches(sx + 0.15),
             Inches(card_top + 0.3),
@@ -604,8 +584,8 @@ def render_stat_highlight_slide(
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
-        run.text = str(stat.get("value", ""))
-        run.font.size = Pt(FONT_SIZE_STAT_NUMBER)
+        run.text = value_text
+        run.font.size = stat_font
         run.font.bold = True
         run.font.color.rgb = card_color
         run.font.name = font_name

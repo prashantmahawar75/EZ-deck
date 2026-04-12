@@ -85,7 +85,9 @@ def create_slide(
     slide = prs.slides.add_slide(layout)
 
     # Set slide title via placeholder if available
-    _set_slide_title(slide, title, style)
+    # (skip for types that render their own title)
+    if slide_type not in ("TITLE", "SECTION_DIVIDER"):
+        _set_slide_title(slide, title, style)
 
     # Add speaker notes
     if speaker_notes:
