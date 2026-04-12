@@ -14,6 +14,7 @@ from typing import Any
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
 
 from builder.layout_manager import LayoutManager
@@ -88,6 +89,15 @@ def create_slide(
     # (skip for types that render their own title)
     if slide_type not in ("TITLE", "SECTION_DIVIDER"):
         _set_slide_title(slide, title, style)
+
+    # Add dark background for slide types not handled by content_renderer
+    _NEEDS_FACTORY_DARK_BG = {
+        "BAR_CHART", "PIE_CHART", "LINE_CHART", "AREA_CHART",
+        "TABLE", "TIMELINE_INFOGRAPHIC", "PROCESS_FLOW_INFOGRAPHIC",
+        "COMPARISON_INFOGRAPHIC",
+    }
+    if slide_type in _NEEDS_FACTORY_DARK_BG:
+        _add_dark_background(slide)
 
     # Add speaker notes
     if speaker_notes:
@@ -175,6 +185,22 @@ def create_slide(
     return created_slides
 
 
+def _add_dark_background(slide: Any) -> None:
+    """Add a dark navy background rectangle covering the full slide."""
+    bg = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(0), Inches(0),
+        Inches(SLIDE_WIDTH_INCHES), Inches(SLIDE_HEIGHT_INCHES),
+    )
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    bg.line.fill.background()
+    # Send to back so other shapes render on top
+    sp = bg._element
+    sp.getparent().remove(sp)
+    slide.shapes._spTree.insert(2, sp)
+
+
 def _set_slide_title(slide: Any, title: str, style: MasterStyle) -> None:
     """Set the slide's title using the title placeholder if available.
 
@@ -189,6 +215,7 @@ def _set_slide_title(slide: Any, title: str, style: MasterStyle) -> None:
             for p in ph.text_frame.paragraphs:
                 for run in p.runs:
                     run.font.name = style.font_name
+                    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
             return
 
     # No title placeholder — add a text box at the top
@@ -211,7 +238,7 @@ def _set_slide_title(slide: Any, title: str, style: MasterStyle) -> None:
     run.text = title
     run.font.size = Pt(FONT_SIZE_TITLE)
     run.font.bold = True
-    run.font.color.rgb = style.dark_text
+    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
     run.font.name = style.font_name
 
 

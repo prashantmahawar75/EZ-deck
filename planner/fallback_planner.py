@@ -272,16 +272,25 @@ def plan_slides_fallback(
     if not takeaways:
         takeaways = [{"icon_hint": "✓", "text": f"Review the full {title} document for details"}]
 
-    slides.append({
-        "slide_number": slide_num,
-        "slide_type": "KEY_TAKEAWAYS",
-        "title": "Key Takeaways",
-        "subtitle": None,
-        "content": {"takeaways": takeaways[:5]},
-        "speaker_notes": "These are the top takeaways from our presentation.",
-        "source_sections": [],
-    })
-    slide_num += 1
+
+    # Fix 7: Deduplicate KEY_TAKEAWAYS if last content slide is already a takeaways/conclusion/summary
+    TAKEAWAY_KEYWORDS = ["takeaway", "conclusion", "summary", "key points"]
+    last_slide = slides[-1] if slides else None
+    if last_slide and any(kw in (last_slide.get("title", "").lower()) for kw in TAKEAWAY_KEYWORDS):
+        last_slide["slide_type"] = "KEY_TAKEAWAYS"
+        last_slide["content"] = {"takeaways": takeaways[:5]}
+        last_slide["speaker_notes"] = "These are the top takeaways from our presentation."
+    else:
+        slides.append({
+            "slide_number": slide_num,
+            "slide_type": "KEY_TAKEAWAYS",
+            "title": "Key Takeaways",
+            "subtitle": None,
+            "content": {"takeaways": takeaways[:5]},
+            "speaker_notes": "These are the top takeaways from our presentation.",
+            "source_sections": [],
+        })
+        slide_num += 1
 
     # BUG 3 FIX: Always add a conclusion/closing slide
     # Check if markdown has a ## Conclusion section

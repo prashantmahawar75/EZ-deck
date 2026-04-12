@@ -90,8 +90,8 @@ def render_timeline(
 
     events = events[:MAX_TIMELINE_EVENTS]
     accent = accent_color or RGBColor(0x2E, 0x86, 0xAB)
-    dark_text = RGBColor(0x33, 0x33, 0x33)
-    light_text = RGBColor(0x66, 0x66, 0x66)
+    dark_text = RGBColor(0xFF, 0xFF, 0xFF)
+    light_text = RGBColor(0xCC, 0xCC, 0xCC)
 
     # Layout dimensions
     sw = SLIDE_WIDTH_INCHES

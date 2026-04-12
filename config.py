@@ -96,7 +96,7 @@ FONT_SIZE_STAT_CONTEXT = 14     # Raised from 12 → 14 (global readability stan
 # Rendering limits
 # ──────────────────────────────────────────────
 MAX_BULLETS_PER_SLIDE = 6      # 6x6 rule: max 6 lines per slide
-MAX_BULLET_WORDS = 7           # 6x6 rule: max 7 words per line (globally accepted)
+MAX_BULLET_WORDS = 12          # Allow up to 12 words per bullet (less truncation)
 MAX_WORDS_PER_LINE = 7         # Alias for clarity — same as MAX_BULLET_WORDS
 MAX_LINES_PER_SLIDE = 7        # 7x7 rule: max 7 text lines per content area
 MAX_STATS_PER_SLIDE = 3

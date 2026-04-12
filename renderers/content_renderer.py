@@ -88,6 +88,22 @@ def _dims() -> dict[str, float]:
     }
 
 
+def _add_dark_background(slide: Any) -> None:
+    """Add a dark navy background rectangle to the slide (for theme consistency)."""
+    d = _dims()
+    bg_rect = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(0), Inches(0),
+        Inches(d["sw"]), Inches(d["sh"]),
+    )
+    bg_rect.fill.solid()
+    bg_rect.fill.fore_color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    bg_rect.line.fill.background()
+    # Send background to back
+    sp = bg_rect._element
+    sp.getparent().insert(0, sp)
+
+
 def render_title_slide(
     content: dict[str, Any],
     slide: Any,
@@ -192,60 +208,109 @@ def render_agenda_slide(
     if not items:
         return
 
-    item_height = min(0.65, d["content_h"] / len(items))
-    start_x = d["lm"] + 0.2
-    start_y = d["content_top"] + 0.2
+    _add_dark_background(slide)
 
-    for i, item in enumerate(items):
-        iy = start_y + i * item_height
-
-        # Number circle - slightly larger for 2-digit numbers
-        item_number = item.get("number", i + 1)
-        circle_size = 0.48 if item_number >= 10 else 0.42
-        circle = slide.shapes.add_shape(
-            MSO_SHAPE.OVAL,
-            Inches(start_x),
-            Inches(iy),
-            Inches(circle_size),
-            Inches(circle_size),
-        )
-        circle.fill.solid()
-        circle.fill.fore_color.rgb = accent
-        circle.line.fill.background()
-
-        tf = circle.text_frame
-        tf.auto_size = None  # Prevent auto-sizing
-        tf.word_wrap = False  # CRITICAL: Prevent text wrapping for 2-digit numbers
-        # Vertical centering within circle
-        p = tf.paragraphs[0]
-        p.alignment = PP_ALIGN.CENTER
-        p.space_before = Pt(0)
-        p.space_after = Pt(0)
-        run = p.add_run()
-        run.text = str(item_number)
-        # BUG 10 FIX: Font size for badges - keep readable for 2-digits
-        badge_font_size = 12 if item_number >= 10 else 14
-        run.font.size = Pt(badge_font_size)
-        run.font.bold = True
-        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        run.font.name = font_name
-
-        # Topic text
-        txbox = slide.shapes.add_textbox(
-            Inches(start_x + circle_size + 0.3),
-            Inches(iy),
-            Inches(d["usable_w"] - circle_size - 0.7),
-            Inches(circle_size),
-        )
-        tf = txbox.text_frame
-        tf.word_wrap = True
-        p = tf.paragraphs[0]
-        p.alignment = PP_ALIGN.LEFT
-        run = p.add_run()
-        run.text = item.get("topic", "")
-        run.font.size = Pt(FONT_SIZE_BODY)
-        run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-        run.font.name = font_name
+    if len(items) > 8:
+        # 2-column agenda
+        mid = (len(items) + 1) // 2
+        left, right = items[:mid], items[mid:]
+        col_width = d["usable_w"] * 0.45
+        col_gap = d["usable_w"] * 0.1
+        start_x_left = d["lm"] + 0.2
+        start_x_right = d["lm"] + col_width + col_gap + 0.2
+        start_y = d["content_top"] + 0.2
+        item_height = min(0.65, d["content_h"] / max(len(left), len(right)))
+        for col, start_x, col_items in [(0, start_x_left, left), (1, start_x_right, right)]:
+            for i, item in enumerate(col_items):
+                iy = start_y + i * item_height
+                item_number = item.get("number", i + 1 + (mid if col == 1 else 0))
+                circle_size = 0.48 if item_number >= 10 else 0.42
+                circle = slide.shapes.add_shape(
+                    MSO_SHAPE.OVAL,
+                    Inches(start_x),
+                    Inches(iy),
+                    Inches(circle_size),
+                    Inches(circle_size),
+                )
+                circle.fill.solid()
+                circle.fill.fore_color.rgb = accent
+                circle.line.fill.background()
+                tf = circle.text_frame
+                tf.auto_size = None
+                tf.word_wrap = False
+                p = tf.paragraphs[0]
+                p.alignment = PP_ALIGN.CENTER
+                p.space_before = Pt(0)
+                p.space_after = Pt(0)
+                run = p.add_run()
+                run.text = str(item_number)
+                badge_font_size = 12 if item_number >= 10 else 14
+                run.font.size = Pt(badge_font_size)
+                run.font.bold = True
+                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                run.font.name = font_name
+                txbox = slide.shapes.add_textbox(
+                    Inches(start_x + circle_size + 0.3),
+                    Inches(iy),
+                    Inches(col_width - circle_size - 0.7),
+                    Inches(circle_size),
+                )
+                tf = txbox.text_frame
+                tf.word_wrap = True
+                p = tf.paragraphs[0]
+                p.alignment = PP_ALIGN.LEFT
+                run = p.add_run()
+                run.text = item.get("topic", "")
+                run.font.size = Pt(FONT_SIZE_BODY)
+                run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                run.font.name = font_name
+    else:
+        item_height = min(0.65, d["content_h"] / len(items))
+        start_x = d["lm"] + 0.2
+        start_y = d["content_top"] + 0.2
+        for i, item in enumerate(items):
+            iy = start_y + i * item_height
+            item_number = item.get("number", i + 1)
+            circle_size = 0.48 if item_number >= 10 else 0.42
+            circle = slide.shapes.add_shape(
+                MSO_SHAPE.OVAL,
+                Inches(start_x),
+                Inches(iy),
+                Inches(circle_size),
+                Inches(circle_size),
+            )
+            circle.fill.solid()
+            circle.fill.fore_color.rgb = accent
+            circle.line.fill.background()
+            tf = circle.text_frame
+            tf.auto_size = None
+            tf.word_wrap = False
+            p = tf.paragraphs[0]
+            p.alignment = PP_ALIGN.CENTER
+            p.space_before = Pt(0)
+            p.space_after = Pt(0)
+            run = p.add_run()
+            run.text = str(item_number)
+            badge_font_size = 12 if item_number >= 10 else 14
+            run.font.size = Pt(badge_font_size)
+            run.font.bold = True
+            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            run.font.name = font_name
+            txbox = slide.shapes.add_textbox(
+                Inches(start_x + circle_size + 0.3),
+                Inches(iy),
+                Inches(d["usable_w"] - circle_size - 0.7),
+                Inches(circle_size),
+            )
+            tf = txbox.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.alignment = PP_ALIGN.LEFT
+            run = p.add_run()
+            run.text = item.get("topic", "")
+            run.font.size = Pt(FONT_SIZE_BODY)
+            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+            run.font.name = font_name
 
     logger.debug("Rendered agenda with %d items", len(items))
 
@@ -266,6 +331,7 @@ def render_exec_summary_slide(
     """
     accent = accent_color or RGBColor(0x2E, 0x86, 0xAB)
     d = _dims()
+    _add_dark_background(slide)
     insights = content.get("insights", [])[:4]
     key_metric = content.get("key_metric")
 
@@ -358,7 +424,7 @@ def render_exec_summary_slide(
             run = p.add_run()
             run.text = insight
             run.font.size = Pt(FONT_SIZE_BODY)
-            run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
             run.font.name = font_name
 
     logger.debug("Rendered exec summary with %d insights", len(insights))
@@ -385,17 +451,7 @@ def render_bullets_slide(
     if not bullets:
         return
 
-    # Left accent bar — full height visual anchor
-    accent_bar = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
-        Inches(d["lm"] + 0.2),
-        Inches(d["content_top"]),
-        Inches(0.07),
-        Inches(d["content_h"]),
-    )
-    accent_bar.fill.solid()
-    accent_bar.fill.fore_color.rgb = accent
-    accent_bar.line.fill.background()
+    _add_dark_background(slide)
 
     # Render each bullet as an independent row with hierarchy
     n = len(bullets)
@@ -427,7 +483,7 @@ def render_bullets_slide(
         run = p.add_run()
         run.text = text
         run.font.size = Pt(FONT_SIZE_BODY)
-        run.font.color.rgb = RGBColor(0x2A, 0x2A, 0x2A)
+        run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
         run.font.name = font_name
 
         # Sub-bullets — lighter, indented
@@ -447,7 +503,7 @@ def render_bullets_slide(
                 run_sub = p_sub.add_run()
                 run_sub.text = f"– {sb}"
                 run_sub.font.size = Pt(FONT_SIZE_SMALL)
-                run_sub.font.color.rgb = RGBColor(0x77, 0x77, 0x77)
+                run_sub.font.color.rgb = RGBColor(0xAA, 0xBB, 0xCC)
                 run_sub.font.name = font_name
 
     logger.debug("Rendered bullet slide with %d bullets", len(bullets))
@@ -469,6 +525,8 @@ def render_two_column_slide(
     """
     accent = accent_color or RGBColor(0x2E, 0x86, 0xAB)
     d = _dims()
+
+    _add_dark_background(slide)
 
     left_data = content.get("left", {})
     right_data = content.get("right", {})
@@ -525,7 +583,7 @@ def render_two_column_slide(
             run = p.add_run()
             run.text = f"• {point}"
             run.font.size = Pt(FONT_SIZE_SMALL)
-            run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
             run.font.name = font_name
 
     logger.debug("Rendered two-column slide")
@@ -551,6 +609,8 @@ def render_stat_highlight_slide(
 
     if not stats:
         return
+
+    _add_dark_background(slide)
 
     # Card palette for visual variety
     card_colors = [
@@ -685,6 +745,8 @@ def render_key_takeaways_slide(
 
     if not takeaways:
         return
+
+    _add_dark_background(slide)
 
     n = len(takeaways)
     card_height = min(0.9, (d["content_h"] - 0.2) / n)

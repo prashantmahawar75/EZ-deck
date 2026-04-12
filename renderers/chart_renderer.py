@@ -60,6 +60,10 @@ def _setup_style(palette: list[str] | None = None, font_family: str | None = Non
         "figure.facecolor": "none",
         "axes.facecolor": "none",
         "savefig.facecolor": "none",
+        "text.color": "white",
+        "axes.labelcolor": "white",
+        "xtick.color": "white",
+        "ytick.color": "white",
     })
 
     return colors, font
@@ -147,11 +151,18 @@ def render_bar_chart(
         # Add value labels on bars
         for bar, val in zip(bars, y_values):
             if val != 0:
+                # Show up to 3 decimals for small values, else 1 decimal or int
+                if isinstance(val, float) and abs(val) < 1:
+                    label = f"{val:.3f}"
+                elif isinstance(val, float) and val != int(val):
+                    label = f"{val:,.1f}"
+                else:
+                    label = f"{int(val):,}"
                 ax.text(
                     bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                    f"{val:,.1f}" if isinstance(val, float) and val != int(val) else f"{int(val):,}",
+                    label,
                     ha="center", va="bottom", fontsize=10, fontweight="bold",
-                    color="#2A2A2A",
+                    color="white",
                 )
 
     ax.set_xticks(x)
@@ -167,11 +178,11 @@ def render_bar_chart(
     # Style: remove top and right spines
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_color("#CCCCCC")
-    ax.spines["bottom"].set_color("#CCCCCC")
+    ax.spines["left"].set_color("#666666")
+    ax.spines["bottom"].set_color("#666666")
 
     # Grid
-    ax.yaxis.grid(True, color="#E0E0E0", alpha=0.5, zorder=0)
+    ax.yaxis.grid(True, color="#444444", alpha=0.5, zorder=0)
     ax.xaxis.grid(False)
 
     if num_series > 1:
@@ -241,7 +252,7 @@ def render_pie_chart(
 
     for text in texts:
         text.set_fontsize(12)
-        text.set_color("#333333")
+        text.set_color("white")
     for autotext in autotexts:
         autotext.set_fontsize(11)
         autotext.set_fontweight("bold")
@@ -334,10 +345,10 @@ def render_line_chart(
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_color("#CCCCCC")
-    ax.spines["bottom"].set_color("#CCCCCC")
+    ax.spines["left"].set_color("#666666")
+    ax.spines["bottom"].set_color("#666666")
 
-    ax.yaxis.grid(True, color="#E0E0E0", alpha=0.5, zorder=0)
+    ax.yaxis.grid(True, color="#444444", alpha=0.5, zorder=0)
     
     # BUG 5 FIX: Force integer X-axis ticks for year-based data
     # Collect all numeric x values to determine if they're years
@@ -440,10 +451,10 @@ def render_area_chart(
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_color("#CCCCCC")
-    ax.spines["bottom"].set_color("#CCCCCC")
+    ax.spines["left"].set_color("#666666")
+    ax.spines["bottom"].set_color("#666666")
 
-    ax.yaxis.grid(True, color="#E0E0E0", alpha=0.5, zorder=0)
+    ax.yaxis.grid(True, color="#444444", alpha=0.5, zorder=0)
     ax.xaxis.grid(False)
 
     if len(series) > 1:
